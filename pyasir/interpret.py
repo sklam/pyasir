@@ -12,7 +12,9 @@ from . import nodes as _df
 
 _BINOPS = {
     "<=": operator.le,
+    ">=": operator.ge,
     ">": operator.gt,
+    "<": operator.lt,
     "+": operator.add,
     "-": operator.sub,
     "*": operator.mul,

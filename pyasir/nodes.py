@@ -101,10 +101,7 @@ class LoopNode(RegionNode):
         sig = signature(self.region_func)
         ba = sig.bind(*args, **kwargs)
         scope = {ArgNode(k): v for k, v in ba.arguments.items()}
-
-        loopbody = LoopBodyNode(
-            tuple([_normalize(cont), *values]), scope
-        )
+        loopbody = LoopBodyNode(tuple(map(_normalize, [cont, *values])), scope)
         pred_node = UnpackNode(loopbody, 0)
         value_nodes = tuple(
             [UnpackNode(loopbody, i) for i in range(len(values))]

@@ -13,7 +13,6 @@ from llvmlite import binding as llvm
 from . import nodes as _df
 
 
-
 def generate(funcdef: _df.FuncDef):
     mod = ir.Module()
     be = LLVMBackend(module=mod, scope={}, cache={})
@@ -35,9 +34,13 @@ def generate(funcdef: _df.FuncDef):
     tm = llvm.Target.from_default_triple().create_target_machine()
     print(tm.emit_assembly(llmod))
 
-
     # bind
-    jitlib =llvm.JITLibraryBuilder().add_ir(llmod).export_symbol(fn.name)
+    jitlib = (
+        llvm.JITLibraryBuilder()
+        .add_ir(llmod)
+        .add_current_process()
+        .export_symbol(fn.name)
+    )
     jitres = jitlib.link(lljit, repr(funcdef))
     addr = jitres[fn.name]
     proto = CFUNCTYPE(c_int64, c_int64)
@@ -67,9 +70,7 @@ def make_llvm_jit(mod: ir.Module):
     return llvm.create_lljit_compiler(tm)
 
 
-
 inttype = ir.IntType(64)
-
 
 
 @dataclass(frozen=True)
@@ -100,12 +101,14 @@ class LLVMBackend:
 
             ba = sig.bind(*fn.args)
             args = {_df.ArgNode(k): v for k, v in ba.arguments.items()}
-            be = LLVMBackend(module=self.module, scope=args, builder=builder, cache={})
+            be = LLVMBackend(
+                module=self.module, scope=args, builder=builder, cache={}
+            )
             res = be.emit(funcdef.node)
             be.builder.ret(res)
         return fn
 
-    def emit(self, node: _df.DFNode):
+    def emit(self, node: _df.DFNode) -> ir.Value:
         if node in self.cache:
             res = self.cache[node]
         else:
@@ -115,11 +118,18 @@ class LLVMBackend:
         assert isinstance(res, ir.Value)
         return res
 
-    def nested_call(self, node: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]):
+    def nested_call(
+        self, node: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]
+    ) -> ir.Value:
         nested = _dc_replace(self, scope=scope, cache={})
         return nested.emit(node)
 
-
+    def do_loop(
+        self, *values: _df.DFNode, scope: dict[str, Any]
+    ) -> tuple[ir.Value, tuple[ir.Value, ...]]:
+        nested = _dc_replace(self, scope=scope, cache={})
+        pred, *values = [nested.emit(v) for v in values]
+        return pred, values
 
 
 @singledispatch
@@ -158,16 +168,18 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
 
         be.builder.position_at_end(bb_current)
         case_pred = ir.Constant(pred.type, case.region.case_pred.py_value)
-        bb_case_preds[bb_case] = case_pred
 
         be.builder.position_at_end(bb_case)
         case_outs = be.emit(case)
-        bb_case_outs[bb_case] = case_outs
+
+        bb_case_end = be.builder.basic_block
+        bb_case_preds[bb_case] = case_pred
+        bb_case_outs[bb_case_end] = case_outs
+
         be.builder.branch(bb_after)
 
     be.builder.position_at_end(bb_default)
     be.builder.unreachable()
-
 
     be.builder.position_at_end(bb_current)
     swt = be.builder.switch(pred, bb_default)
@@ -179,7 +191,6 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
     for bb, case_outs in bb_case_outs.items():
         phi.add_incoming(case_outs, bb)
     return phi
-
 
 
 @emit_node.register(_df.OpNode)
@@ -198,6 +209,8 @@ def _emit_node_OpNode(node: _df.OpNode, be: LLVMBackend):
         return be.builder.sub(lhs, rhs)
     elif node.op == "+":
         return be.builder.add(lhs, rhs)
+    elif node.op == "*":
+        return be.builder.mul(lhs, rhs)
     else:
         raise AssertionError(f"not supported {node}")
 
@@ -215,9 +228,75 @@ def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
     return res
 
 
-
 @emit_node.register(_df.LiteralNode)
 def _emit_node_LiteralNode(node: _df.LiteralNode, be: LLVMBackend):
     val = node.py_value
     assert isinstance(val, int)
     return inttype(val)
+
+
+@emit_node.register(_df.UnpackNode)
+def _emit_node_UnpackNode(node: _df.UnpackNode, be: LLVMBackend):
+    values = be.emit(node.producer)
+    return be.builder.extract_value(values, node.index)
+
+
+@emit_node.register(_df.LoopBodyNode)
+def _emit_node_LoopBodyNode(node: _df.LoopBodyNode, be: LLVMBackend):
+    scope = node.scope
+
+    bb_head = be.builder.basic_block
+    incoming_values = {k: be.emit(v) for k, v in scope.items()}
+
+    bb_loop = be.builder.append_basic_block("loop")
+    bb_endloop = be.builder.append_basic_block("endloop")
+    be.builder.branch(bb_loop)
+    be.builder.position_at_end(bb_loop)
+
+    # phi and incoming
+    phis = {k: be.builder.phi(v.type) for k, v in incoming_values.items()}
+    for phi, lv in zip(phis.values(), incoming_values.values()):
+        phi.add_incoming(lv, bb_head)
+
+    loop_pred, loop_values = be.do_loop(*node.values, scope=phis)
+
+    # phi loop back
+    for phi, lv in zip(phis.values(), loop_values):
+        phi.add_incoming(lv, bb_loop)
+
+    # phi
+    be.builder.cbranch(
+        be.builder.trunc(loop_pred, ir.IntType(1)), bb_loop, bb_endloop
+    )
+
+    be.builder.position_at_end(bb_endloop)
+    struct = ir.Constant(
+        ir.LiteralStructType([v.type for v in loop_values]), None
+    )
+    for i, v in enumerate(loop_values):
+        struct = be.builder.insert_value(struct, v, i)
+    return struct
+
+
+def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
+    module: ir.Module = builder.module
+    try:
+        printf = module.get_global("printf")
+    except KeyError:
+        fnty = ir.FunctionType(
+            ir.IntType(32), [ir.IntType(8).as_pointer()], var_arg=True
+        )
+        printf = ir.Function(module, fnty, "printf")
+
+    fmt = bytearray(fmtstring.encode())
+    fmt_type = ir.ArrayType(ir.IntType(8), len(fmt))
+
+    name = module.get_unique_name("conststr")
+    gv = ir.GlobalVariable(module, fmt_type, name=name)
+    gv.initializer = ir.Constant(fmt_type, fmt)
+    gv.global_constant = True
+
+    gv.linkage = "internal"
+    return builder.call(
+        printf, [builder.bitcast(gv, printf.type.pointee.args[0]), *args]
+    )

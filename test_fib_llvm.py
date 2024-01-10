@@ -1,11 +1,11 @@
 from pprint import pprint
 
 from pyasir.be_llvm import generate
+from pyasir.interpret import interpret
 from pyasir import nodes as df
 
 
 from test_fib import fib_ir, fib_expect
-
 
 
 def test_fib_llvm():
@@ -19,6 +19,7 @@ def test_fib_llvm():
         got = jf(x)
         print(f"fib({x}) = {got}")
         assert got == y
+        assert interpret(node, x) == y
 
 
 def fib_tail(n, accum1=1, accum2=1):
@@ -27,6 +28,7 @@ def fib_tail(n, accum1=1, accum2=1):
         return accum1
     else:
         return fib_tail(n - 1, accum1 + accum2, accum1)
+
 
 @df.func
 def _fib_tail_ir(n, accum1, accum2):
@@ -64,6 +66,7 @@ def test_fib_tail_recur_llvm():
         print(f"fib({x}) = {got}")
         assert got == y
 
+        assert interpret(node, x) == y
 
 
 if __name__ == "__main__":
