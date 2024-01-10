@@ -5,7 +5,7 @@ from pyasir.interpret import interpret
 from pyasir import nodes as df
 
 
-from test_fib import fib_ir, fib_expect
+from .test_fib import fib_ir, fib_expect
 
 
 def test_fib_llvm():

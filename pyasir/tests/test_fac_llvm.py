@@ -3,7 +3,7 @@ from pprint import pprint
 from pyasir.interpret import interpret
 from pyasir.be_llvm import generate
 
-from test_fac import fac_ir, fac_expect
+from .test_fac import fac_ir, fac_expect
 
 
 def test_fac_llvm():
