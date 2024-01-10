@@ -20,7 +20,9 @@ class DFNode:
     __mul__ = partialmethod(_generic_binop, op="*")
 
     __le__ = partialmethod(_generic_binop, op="<=")
+    __ge__ = partialmethod(_generic_binop, op=">=")
     __gt__ = partialmethod(_generic_binop, op=">")
+    __lt__ = partialmethod(_generic_binop, op="<")
 
 
 @dataclass(frozen=True)
@@ -94,14 +96,14 @@ class LoopNode(RegionNode):
 
     def __call__(self, *args: Any, **kwargs: Any):
         nodes = _call_func_no_post(self.region_func)
-        cont, *values = nodes
+        cont, values = nodes
 
         sig = signature(self.region_func)
         ba = sig.bind(*args, **kwargs)
         scope = {ArgNode(k): v for k, v in ba.arguments.items()}
 
         loopbody = LoopBodyNode(
-            tuple([_normalize(cont), *tuple(values)]), scope
+            tuple([_normalize(cont), *values]), scope
         )
         pred_node = UnpackNode(loopbody, 0)
         value_nodes = tuple(

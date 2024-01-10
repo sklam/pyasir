@@ -32,7 +32,7 @@ def fac_ir(n):
             def loop(n, y):
                 y *= n
                 n -= 1
-                return n > 1, n, y
+                return n > 1, (n, y)
 
             n, y = loop(n, y)
             return y
