@@ -1,4 +1,5 @@
 from pyasir import nodes as df
+from pyasir import datatypes as dt
 from pyasir.interpret import interpret
 from pprint import pprint
 
@@ -20,7 +21,7 @@ def test_fib_py():
 
 
 @df.func
-def fib_ir(n):
+def fib_ir(n: dt.Int64) -> dt.Int64:
     @df.switch(n <= 1)
     def swt(n):
         @df.case(1)

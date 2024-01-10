@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import operator
+from typing import Any, Type
 from dataclasses import dataclass, replace as _dc_replace
 from inspect import signature
 from functools import singledispatch
@@ -11,6 +12,7 @@ from llvmlite import ir
 from llvmlite import binding as llvm
 
 from . import nodes as _df
+from . import datatypes as _dt
 
 
 def generate(funcdef: _df.FuncDef):
@@ -100,7 +102,7 @@ class LLVMBackend:
             builder = ir.IRBuilder(fn.append_basic_block("entry"))
 
             ba = sig.bind(*fn.args)
-            args = {_df.ArgNode(k): v for k, v in ba.arguments.items()}
+            args = {_df.ArgNode(t, k): v for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)}
             be = LLVMBackend(
                 module=self.module, scope=args, builder=builder, cache={}
             )
@@ -193,26 +195,29 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
     return phi
 
 
-@emit_node.register(_df.OpNode)
-def _emit_node_OpNode(node: _df.OpNode, be: LLVMBackend):
-    lhs = be.emit(node.left)
-    rhs = be.emit(node.right)
-    if node.op == "<=":
-        return be.builder.icmp_signed("<=", lhs, rhs)
-    elif node.op == ">=":
-        return be.builder.icmp_signed(">=", lhs, rhs)
-    elif node.op == "<":
-        return be.builder.icmp_signed("<", lhs, rhs)
-    elif node.op == ">":
-        return be.builder.icmp_signed(">", lhs, rhs)
-    elif node.op == "-":
-        return be.builder.sub(lhs, rhs)
-    elif node.op == "+":
-        return be.builder.add(lhs, rhs)
-    elif node.op == "*":
-        return be.builder.mul(lhs, rhs)
-    else:
-        raise AssertionError(f"not supported {node}")
+@emit_node.register(_df.ExprNode)
+def _emit_node_ExprNode(node: _df.ExprNode, be: LLVMBackend):
+    emitted = [be.emit(arg) for arg in node.args]
+    return emit_llvm(node.op, be.builder, *emitted)
+
+    # lhs = be.emit(node.left)
+    # rhs = be.emit(node.right)
+    # if node.op == "<=":
+    #     return be.builder.icmp_signed("<=", lhs, rhs)
+    # elif node.op == ">=":
+    #     return be.builder.icmp_signed(">=", lhs, rhs)
+    # elif node.op == "<":
+    #     return be.builder.icmp_signed("<", lhs, rhs)
+    # elif node.op == ">":
+    #     return be.builder.icmp_signed(">", lhs, rhs)
+    # elif node.op == "-":
+    #     return be.builder.sub(lhs, rhs)
+    # elif node.op == "+":
+    #     return be.builder.add(lhs, rhs)
+    # elif node.op == "*":
+    #     return be.builder.mul(lhs, rhs)
+    # else:
+    #     raise AssertionError(f"not supported {node}")
 
 
 @emit_node.register(_df.CallNode)
@@ -231,8 +236,7 @@ def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
 @emit_node.register(_df.LiteralNode)
 def _emit_node_LiteralNode(node: _df.LiteralNode, be: LLVMBackend):
     val = node.py_value
-    assert isinstance(val, int)
-    return inttype(val)
+    return emit_llvm_const(node.datatype.get_const_trait(), be.builder, val)
 
 
 @emit_node.register(_df.UnpackNode)
@@ -300,3 +304,43 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
     return builder.call(
         printf, [builder.bitcast(gv, printf.type.pointee.args[0]), *args]
     )
+
+# ------------------------------ emit_llvm_const ------------------------------
+
+@singledispatch
+def emit_llvm_const(dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value):
+    raise NotImplementedError(dt)
+
+
+@emit_llvm_const.register(_dt.Int64.ConstTrait)
+def _(dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value):
+    return ir.Constant(ir.IntType(64), value)
+
+
+# --------------------------------- emit_llvm ---------------------------------
+
+@singledispatch
+def emit_llvm(op: _dt.OpTrait, builder: ir.Builder, *args: ir.Value):
+    raise NotImplementedError(op)
+
+
+@emit_llvm.register(_dt.IntBinop)
+def _(op: Type[_dt.IntBinop], builder: ir.Builder, lhs: Any, rhs: Any) :
+    opimpl = op.py_impl
+
+    if opimpl == operator.le:
+        return builder.icmp_signed("<=", lhs, rhs)
+    elif opimpl == operator.ge:
+        return builder.icmp_signed(">=", lhs, rhs)
+    elif opimpl == operator.lt:
+        return builder.icmp_signed("<", lhs, rhs)
+    elif opimpl == operator.gt:
+        return builder.icmp_signed(">", lhs, rhs)
+    elif opimpl == operator.sub:
+        return builder.sub(lhs, rhs)
+    elif opimpl == operator.add:
+        return builder.add(lhs, rhs)
+    elif opimpl == operator.mul:
+        return builder.mul(lhs, rhs)
+    else:
+        raise AssertionError(f"not supported {op}")

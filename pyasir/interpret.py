@@ -8,18 +8,7 @@ from functools import singledispatch
 from pprint import pformat
 
 from . import nodes as _df
-
-
-_BINOPS = {
-    "<=": operator.le,
-    ">=": operator.ge,
-    ">": operator.gt,
-    "<": operator.lt,
-    "+": operator.add,
-    "-": operator.sub,
-    "*": operator.mul,
-}
-
+from . import datatypes as _dt
 
 def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
     data: Data = _eval_funcdef(funcdef, *args, **kwargs)
@@ -29,10 +18,10 @@ def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
 def _eval_funcdef(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Data:
     sig = signature(funcdef.func)
     ba = sig.bind(*args, **kwargs)
-    args = {_df.ArgNode(k): v for k, v in ba.arguments.items()}
+    args = {_df.ArgNode(t, k): v for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)}
     ctx = Context(scope=args, cache={})
-    return ctx.eval(funcdef.node)
-
+    res = ctx.eval(funcdef.node)
+    return res
 
 def _normalize(value: Any) -> _df.DFNode:
     if isinstance(value, _df.DFNode):
@@ -109,12 +98,10 @@ def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     raise AssertionError(f"no matching case for pred={pred}:\n{pformat(node)}")
 
 
-@eval_node.register(_df.OpNode)
-def _eval_node_OpNode(node: _df.OpNode, ctx: Context):
-    lhs = ctx.eval(node.left)
-    rhs = ctx.eval(node.right)
-    op = _BINOPS[node.op]
-    return Data(op(lhs.value, rhs.value))
+@eval_node.register(_df.ExprNode)
+def _eval_node_ExprNode(node: _df.ExprNode, ctx: Context):
+    evaled = [ctx.eval(arg).value for arg in node.args]
+    return Data(eval_op(node.op, *evaled))
 
 
 @eval_node.register(_df.UnpackNode)
@@ -143,3 +130,16 @@ def _eval_node_CallNode(node: _df.CallNode, ctx: Context):
         *[ctx.eval(v) for v in node.args],
         **{k: ctx.eval(v) for k, v in node.kwargs.items()},
     )
+
+
+# -----------------------------eval_op----------------------------------------
+
+@singledispatch
+def eval_op(op: _dt.OpTrait, *args: Any):
+    raise NotImplementedError(f"no eval_op is implemented for {op}")
+
+
+@eval_op.register(_dt.IntBinop)
+def _(op: _dt.IntBinop, lhs, rhs):
+    return op.py_impl(lhs, rhs)
+

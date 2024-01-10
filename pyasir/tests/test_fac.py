@@ -1,4 +1,5 @@
 from pyasir import nodes as df
+from pyasir import datatypes as dt
 from pyasir.interpret import interpret
 from pprint import pprint
 
@@ -21,7 +22,7 @@ def test_fac_py():
 
 
 @df.func
-def fac_ir(n):
+def fac_ir(n: dt.Int64) -> dt.Int64:
     y = 1
 
     @df.switch(n > 1)
@@ -62,4 +63,4 @@ def test_fac_ir():
 
 
 if __name__ == "__main__":
-    test_fac_ir()
+    test_fac_ir_once()
