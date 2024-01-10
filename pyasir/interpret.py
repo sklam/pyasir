@@ -10,6 +10,7 @@ from pprint import pformat
 from . import nodes as _df
 from . import datatypes as _dt
 
+
 def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
     data: Data = _eval_funcdef(funcdef, *args, **kwargs)
     return data.value
@@ -18,10 +19,14 @@ def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
 def _eval_funcdef(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Data:
     sig = signature(funcdef.func)
     ba = sig.bind(*args, **kwargs)
-    args = {_df.ArgNode(t, k): v for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)}
+    args = {
+        _df.ArgNode(t, k): v
+        for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)
+    }
     ctx = Context(scope=args, cache={})
     res = ctx.eval(funcdef.node)
     return res
+
 
 def _normalize(value: Any) -> _df.DFNode:
     if isinstance(value, _df.DFNode):
@@ -134,6 +139,7 @@ def _eval_node_CallNode(node: _df.CallNode, ctx: Context):
 
 # -----------------------------eval_op----------------------------------------
 
+
 @singledispatch
 def eval_op(op: _dt.OpTrait, *args: Any):
     raise NotImplementedError(f"no eval_op is implemented for {op}")
@@ -142,4 +148,3 @@ def eval_op(op: _dt.OpTrait, *args: Any):
 @eval_op.register(_dt.IntBinop)
 def _(op: _dt.IntBinop, lhs, rhs):
     return op.py_impl(lhs, rhs)
-

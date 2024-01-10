@@ -10,6 +10,7 @@ from . import datatypes as _dt
 
 Tdatatype = Type[_dt.DataType]
 
+
 def _generic_binop(self, other, *, op):
     other = as_node(other)
     return self.datatype.get_binop(op, self, other)
@@ -35,7 +36,12 @@ class RegionNode(DFNode):
 
 def _call_func_no_post(func, argtys):
     sig = signature(func)
-    args = sig.bind(*(ArgNode(datatype=t, name=k) for k, t in zip(sig.parameters.keys(), argtys)))
+    args = sig.bind(
+        *(
+            ArgNode(datatype=t, name=k)
+            for k, t in zip(sig.parameters.keys(), argtys)
+        )
+    )
     ret = func(**args.arguments)
     return ret
 
@@ -61,7 +67,9 @@ class FuncNode(RegionNode):
     def build_node(self) -> FuncDef:
         node = _call_func(self.func, self.argtys)
         if node.datatype != self.retty:
-            raise _dt.TypeOpError(f"FuncDef returned {node.datatype} instead of {self.retty}")
+            raise _dt.TypeOpError(
+                f"FuncDef returned {node.datatype} instead of {self.retty}"
+            )
         return FuncDef(self.func, self.argtys, self.retty, node)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -77,8 +85,10 @@ class FuncDef:
 
 
 def _bind__dt(sig, *args: ValueNode, **kwargs: ValueNode):
-    return sig.bind(*(a.datatype for a in args),
-                    **{k: v.datatype for k, v in kwargs.items()})
+    return sig.bind(
+        *(a.datatype for a in args),
+        **{k: v.datatype for k, v in kwargs.items()},
+    )
 
 
 @dataclass(frozen=True)
@@ -100,15 +110,28 @@ class SwitchNode(RegionNode):
 
         ty_args = tuple(ba_types.arguments.values())
         case_nodes = _call_func_no_post(self.region_func, ty_args)
-        nodes = tuple([EnterNode.make(cn, _call_func(cn.case_func, ty_args), scope=None) for cn in case_nodes])
+        nodes = tuple(
+            [
+                EnterNode.make(
+                    cn, _call_func(cn.case_func, ty_args), scope=None
+                )
+                for cn in case_nodes
+            ]
+        )
 
         ba = sig.bind(*args, **kwargs)
-        scope = {ArgNode(v.datatype, k): as_node(v) for k, v in ba.arguments.items()}
+        scope = {
+            ArgNode(v.datatype, k): as_node(v) for k, v in ba.arguments.items()
+        }
         for n in nodes[1:]:
             if nodes[0].datatype != n.datatype:
-                raise _dt.TypeOpError(f"incompatible type {n.datatype}; expect {nodes[0].datatype}")
+                raise _dt.TypeOpError(
+                    f"incompatible type {n.datatype}; expect {nodes[0].datatype}"
+                )
         return EnterNode.make(
-            self, CaseExprNode(nodes[0].datatype, self.pred_node, nodes), scope=scope
+            self,
+            CaseExprNode(nodes[0].datatype, self.pred_node, nodes),
+            scope=scope,
         )
 
 
@@ -130,10 +153,15 @@ class LoopNode(RegionNode):
         sig = signature(self.region_func)
         ba = sig.bind(*args, **kwargs)
         scope = {ArgNode(v.datatype, k): v for k, v in ba.arguments.items()}
-        loopbody = LoopBodyNode(_dt.PackedType, tuple(map(as_node, [cont, *values])), scope)
+        loopbody = LoopBodyNode(
+            _dt.PackedType, tuple(map(as_node, [cont, *values])), scope
+        )
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
         value_nodes = tuple(
-            [UnpackNode(loopbody.values[i + 1].datatype, loopbody, i) for i in range(len(values))]
+            [
+                UnpackNode(loopbody.values[i + 1].datatype, loopbody, i)
+                for i in range(len(values))
+            ]
         )
         return LoopExprNode(self, pred=pred_node, values=value_nodes)
 
@@ -192,6 +220,7 @@ loop = LoopNode.make
 class ValueNode(DFNode):
     datatype: Tdatatype
 
+
 @dataclass(frozen=True)
 class LiteralNode(ValueNode):
     py_value: Any
@@ -205,6 +234,7 @@ def as_node(val) -> DFNode:
 @as_node.register(DFNode)
 def _(val: DFNode):
     return val
+
 
 @as_node.register(int)
 def _(val: int):
@@ -265,12 +295,15 @@ class EnterNode(DFNode):
     @classmethod
     def make(cls, region, node, scope):
         _sentry_scope(scope)
-        return cls(datatype=node.datatype, region=region, node=node, scope=scope)
+        return cls(
+            datatype=node.datatype, region=region, node=node, scope=scope
+        )
 
     def __iter__(self):
         if isinstance(self.node, LoopExprNode):
             unpacked = [
-                UnpackNode(self.node.values[i].datatype, self.node, i) for i in range(len(self.node.values))
+                UnpackNode(self.node.values[i].datatype, self.node, i)
+                for i in range(len(self.node.values))
             ]
             return iter(unpacked)
         else:

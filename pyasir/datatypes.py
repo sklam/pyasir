@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from . import nodes as _df
 
 
-
 class TypeOpError(ValueError):
     pass
-
 
 
 class DataType:
@@ -29,6 +27,7 @@ class DataType:
 @dataclass(frozen=True)
 class OpTrait:
     name: str
+
 
 @dataclass(frozen=True)
 class BaseConstTrait:
@@ -50,16 +49,20 @@ INT_BINOPS = {
     "*": IntBinop("int.mul", operator.mul),
 }
 
-class IntegerType(DataType):
 
+class IntegerType(DataType):
     class ConstTrait(BaseConstTrait):
         pass
 
     @classmethod
-    def get_binop(cls, op: str, lhs: _df.ValueNode, rhs: _df.ValueNode) -> _df.ValueNode:
+    def get_binop(
+        cls, op: str, lhs: _df.ValueNode, rhs: _df.ValueNode
+    ) -> _df.ValueNode:
         optrait = INT_BINOPS[op]
         if lhs.datatype != cls or rhs.datatype != cls:
-            raise TypeOpError(f"unsupported op for {op}({lhs.datatype, rhs.datatype})")
+            raise TypeOpError(
+                f"unsupported op for {op}({lhs.datatype, rhs.datatype})"
+            )
         return _df.ExprNode(cls, op=optrait, args=(lhs, rhs))
 
 
@@ -67,9 +70,9 @@ class Int64(IntegerType):
     bitwidth = 64
 
 
-
 class BooleanType(DataType):
     pass
+
 
 Bool = BooleanType
 
@@ -77,5 +80,3 @@ Bool = BooleanType
 @dataclass(frozen=True)
 class PackedType(DataType):
     pass
-
-

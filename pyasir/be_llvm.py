@@ -102,7 +102,10 @@ class LLVMBackend:
             builder = ir.IRBuilder(fn.append_basic_block("entry"))
 
             ba = sig.bind(*fn.args)
-            args = {_df.ArgNode(t, k): v for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)}
+            args = {
+                _df.ArgNode(t, k): v
+                for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)
+            }
             be = LLVMBackend(
                 module=self.module, scope=args, builder=builder, cache={}
             )
@@ -305,10 +308,14 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
         printf, [builder.bitcast(gv, printf.type.pointee.args[0]), *args]
     )
 
+
 # ------------------------------ emit_llvm_const ------------------------------
 
+
 @singledispatch
-def emit_llvm_const(dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value):
+def emit_llvm_const(
+    dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value
+):
     raise NotImplementedError(dt)
 
 
@@ -319,13 +326,14 @@ def _(dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value):
 
 # --------------------------------- emit_llvm ---------------------------------
 
+
 @singledispatch
 def emit_llvm(op: _dt.OpTrait, builder: ir.Builder, *args: ir.Value):
     raise NotImplementedError(op)
 
 
 @emit_llvm.register(_dt.IntBinop)
-def _(op: Type[_dt.IntBinop], builder: ir.Builder, lhs: Any, rhs: Any) :
+def _(op: Type[_dt.IntBinop], builder: ir.Builder, lhs: Any, rhs: Any):
     opimpl = op.py_impl
 
     if opimpl == operator.le:
