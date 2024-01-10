@@ -23,7 +23,12 @@ def test_fib_llvm():
 
 
 def fib_tail(n, accum1=1, accum2=1):
-    # from https://eli.thegreenplace.net/2017/on-recursion-continuations-and-trampolines/
+    # From https://eli.thegreenplace.net/2017/on-recursion-continuations-and-trampolines/
+    # License: public domain
+    # See https://eli.thegreenplace.net/pages/about
+    # > These days I manage my open-source projects on GitHub; they all have
+    # > very liberal licenses. Some of the blog posts contain code; unless
+    # > otherwise stated, all of it is in the public domain.
     if n < 2:
         return accum1
     else:
