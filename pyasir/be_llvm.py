@@ -13,7 +13,6 @@ from llvmlite import binding as llvm
 
 from . import nodes as _df
 from . import datatypes as _dt
-from .typedispatcher import typedispatch
 
 
 def generate(funcdef: _df.FuncDef):
@@ -96,7 +95,9 @@ class LLVMBackend:
             fn = self.module.get_global(fname)
         except KeyError:
             sig = signature(func)
-            llargtys = tuple([emit_llvm_type(t, self.module) for t in funcdef.argtys])
+            llargtys = tuple(
+                [emit_llvm_type(t, self.module) for t in funcdef.argtys]
+            )
             llretty = emit_llvm_type(funcdef.retty, self.module)
             fnty = ir.FunctionType(llretty, llargtys)
             fn = ir.Function(self.module, fnty, name=fname)
@@ -298,17 +299,22 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
 
 # ------------------------------ emit_c_type ------------------------------
 
+
 @singledispatch
 def emit_c_type(datatype: _dt.DataType):
     raise NotImplementedError(datatype)
+
 
 @emit_c_type.register
 def _(datatype: _dt.Int64):
     return c_int64
 
+
 @emit_c_type.register
 def _(datatype: _dt.Float64):
     return c_double
+
+
 # ------------------------------ emit_llvm_type ------------------------------
 
 
@@ -320,6 +326,7 @@ def emit_llvm_type(datatype: _dt.DataType, module: ir.Module):
 @emit_llvm_type.register
 def _(datatype: _dt.IntegerType, module: ir.Module):
     return ir.IntType(datatype.bitwidth)
+
 
 @emit_llvm_type.register
 def _(datatype: _dt.FloatType, module: ir.Module):
@@ -339,6 +346,7 @@ def emit_llvm_const(
 @emit_llvm_const.register
 def _(datatype: _dt.Int64, builder: ir.IRBuilder, value: ir.Value):
     return ir.Constant(ir.IntType(datatype.bitwidth), value)
+
 
 @emit_llvm_const.register
 def _(datatype: _dt.Float64, builder: ir.IRBuilder, value: ir.Value):

@@ -16,18 +16,17 @@ def ensure_type(ty: DataType | Type[DataType]) -> DataType:
         return ty
 
 
-
 class TypeOpError(ValueError):
     pass
 
 
 class DataType(abc.ABC):
-
-    def __init_subclass__(cls) -> None:
-        cls._singleton = object.__new__(cls)
+    __singleton = None
 
     def __new__(cls):
-        return cls._singleton
+        if cls.__singleton is None:
+            cls.__singleton = object.__new__(cls)
+        return cls.__singleton
 
     @abc.abstractmethod
     def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
@@ -70,14 +69,10 @@ INT_BINOPS = {
 class IntegerType(DataType):
     bitwidth: int
 
-    def get_binop(
-        self, op: str, lhs: DataType, rhs: DataType
-    ) -> _df.ValueNode:
+    def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> IntBinop:
         optrait = INT_BINOPS[op](self)
         if lhs != self or rhs != self:
-            raise TypeOpError(
-                f"unsupported op for {op}({lhs, rhs})"
-            )
+            raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         return optrait
 
     def get_cast(self, valtype: DataType) -> OpTrait:
@@ -88,9 +83,12 @@ class Int64(IntegerType):
     bitwidth = 64
 
 
-
 class BooleanType(DataType):
-    pass
+    def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
+        raise NotImplementedError
+
+    def get_cast(self, valtype: DataType) -> OpTrait:
+        raise NotImplementedError
 
 
 Bool = BooleanType
@@ -118,22 +116,21 @@ FLT_BINOPS = {
     "*": lambda restype: FloatBinop(restype, operator.mul),
 }
 
+
 class FloatType(DataType):
     bitwidth: int
 
     def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
         if lhs != self or rhs != self:
-            raise TypeOpError(
-                f"unsupported op for {op}({lhs, rhs})"
-            )
+            raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         optrait = FLT_BINOPS[op](self)
         return optrait
 
     def get_cast(self, valtype: DataType) -> OpTrait:
-        optrait = IntToFloatCast(self,
-                                 py_impl=float,
-                                 from_type=self,
-                                 to_type=valtype)
+        assert isinstance(valtype, IntegerType)
+        optrait = IntToFloatCast(
+            self, py_impl=float, from_type=valtype, to_type=self
+        )
         return optrait
 
 
@@ -141,5 +138,9 @@ class Float64(FloatType):
     bitwidth = 64
 
 
-class PackedType(DataType):
-    pass
+class _PackedType(DataType):
+    def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
+        raise NotImplementedError
+
+    def get_cast(self, valtype: DataType) -> OpTrait:
+        raise NotImplementedError

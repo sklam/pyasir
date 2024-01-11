@@ -17,6 +17,12 @@ def _generic_binop(self, other, *, op):
 
 @dataclass(frozen=True)
 class DFNode:
+    ...
+
+
+@dataclass(frozen=True)
+class ValueNode(DFNode):
+    datatype: _dt.DataType
 
     __add__ = partialmethod(_generic_binop, op="+")
     __sub__ = partialmethod(_generic_binop, op="-")
@@ -78,7 +84,7 @@ class FuncNode(RegionNode):
 @dataclass(frozen=True)
 class FuncDef:
     func: Callable
-    argtys: tuple[_dt.DataType]
+    argtys: tuple[_dt.DataType, ...]
     retty: _dt.DataType
     node: DFNode
 
@@ -141,7 +147,7 @@ class SwitchNode(RegionNode):
 
 @dataclass(frozen=True)
 class LoopNode(RegionNode):
-    region_func: callable
+    region_func: Callable
 
     @classmethod
     def make(cls, func):
@@ -157,9 +163,9 @@ class LoopNode(RegionNode):
         sig = signature(self.region_func)
         ba = sig.bind(*args, **kwargs)
         scope = {ArgNode(v.datatype, k): v for k, v in ba.arguments.items()}
-        loopbody = LoopBodyNode(
-            _dt.PackedType, tuple(map(as_node, [cont, *values])), scope
-        )
+
+        body_values = tuple(map(as_node, [cont, *values]))
+        loopbody = LoopBodyNode(_dt._PackedType(), body_values, scope)
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
         value_nodes = tuple(
             [
@@ -174,13 +180,13 @@ class LoopNode(RegionNode):
 class CaseExprNode(DFNode):
     datatype: _dt.DataType
     pred: DFNode
-    cases: tuple[EnterNode]
+    cases: tuple[EnterNode, ...]
 
 
 @dataclass(frozen=True)
 class CaseNode(RegionNode):
     case_pred: DFNode
-    case_func: callable
+    case_func: Callable
 
     @classmethod
     def make(cls, case_pred: Any):
@@ -190,7 +196,7 @@ class CaseNode(RegionNode):
 @dataclass(frozen=True)
 class LoopBodyNode(DFNode):
     datatype: _dt.DataType
-    values: tuple[DFNode]
+    values: tuple[ValueNode, ...]
     scope: dict
 
     def __hash__(self):
@@ -200,16 +206,15 @@ class LoopBodyNode(DFNode):
 @dataclass(frozen=True)
 class LoopExprNode(DFNode):
     parent: LoopNode
-    pred: DFNode
-    values: tuple[DFNode]
+    pred: ValueNode
+    values: tuple[ValueNode, ...]
 
     def __iter__(self):
         return iter(self.values)
 
 
 @dataclass(frozen=True)
-class UnpackNode(DFNode):
-    datatype: _dt.DataType
+class UnpackNode(ValueNode):
     producer: DFNode
     index: int
 
@@ -221,45 +226,40 @@ loop = LoopNode.make
 
 
 @dataclass(frozen=True)
-class ValueNode(DFNode):
-    datatype: _dt.DataType
-
-
-@dataclass(frozen=True)
 class LiteralNode(ValueNode):
     py_value: Any
 
 
 @singledispatch
-def as_node(val) -> DFNode:
+def as_node(val) -> ValueNode:
     raise NotImplementedError(type(val))
 
 
-@as_node.register(DFNode)
-def _(val: DFNode):
+@as_node.register
+def _(val: ValueNode):
     return val
 
 
-@as_node.register(int)
+@as_node.register
 def _(val: int):
     return LiteralNode(_dt.Int64(), val)
 
 
-@as_node.register(float)
+@as_node.register
 def _(val: float):
     return LiteralNode(_dt.Float64(), val)
 
 
-@as_node.register(bool)
+@as_node.register
 def _(val: bool):
-    return LiteralNode(_dt.Bool, val)
+    return LiteralNode(_dt.Bool(), val)
 
 
-def as_node_args(args):
+def as_node_args(args) -> tuple[ValueNode, ...]:
     return tuple([as_node(v) for v in args])
 
 
-def as_node_kwargs(kwargs):
+def as_node_kwargs(kwargs) -> dict[str, ValueNode]:
     return {k: as_node(v) for k, v in kwargs.items()}
 
 
@@ -275,8 +275,7 @@ class ExprNode(ValueNode):
 
 
 @dataclass(frozen=True)
-class CallNode(DFNode):
-    datatype: _dt.DataType
+class CallNode(ValueNode):
     func: FuncNode
     args: tuple
     kwargs: dict
@@ -295,8 +294,7 @@ class CallNode(DFNode):
 
 
 @dataclass(frozen=True)
-class EnterNode(DFNode):
-    datatype: _dt.DataType
+class EnterNode(ValueNode):
     region: RegionNode
     node: DFNode
     scope: dict[ArgNode, DFNode]
@@ -329,7 +327,7 @@ def _sentry_scope(scope: dict[ArgNode, DFNode] | None):
             assert isinstance(v, DFNode)
 
 
-def cast(value: DFNode, to_type: _dt.DataType) -> DFNode:
+def cast(value: ValueNode, to_type: _dt.DataType) -> DFNode:
     to_type = _dt.ensure_type(to_type)
     op = to_type.get_cast(value.datatype)
     return ExprNode(op.result_type, op, args=tuple([value]))
