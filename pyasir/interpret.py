@@ -148,3 +148,11 @@ def eval_op(op: _dt.OpTrait, *args: Any):
 @eval_op.register(_dt.IntBinop)
 def _(op: _dt.IntBinop, lhs, rhs):
     return op.py_impl(lhs, rhs)
+
+@eval_op.register(_dt.IntToFloatCast)
+def _(op: _dt.IntToFloatCast, value):
+    return op.py_impl(value)
+
+@eval_op.register(_dt.FloatBinop)
+def _(op: _dt.FloatBinop, lhs, rhs):
+    return op.py_impl(lhs, rhs)

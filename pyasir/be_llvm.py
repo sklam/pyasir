@@ -6,13 +6,14 @@ from dataclasses import dataclass, replace as _dc_replace
 from inspect import signature
 from functools import singledispatch
 from pprint import pformat
-from ctypes import CFUNCTYPE, c_int64
+from ctypes import CFUNCTYPE, c_int64, c_double
 
 from llvmlite import ir
 from llvmlite import binding as llvm
 
 from . import nodes as _df
 from . import datatypes as _dt
+from .typedispatcher import typedispatch
 
 
 def generate(funcdef: _df.FuncDef):
@@ -45,7 +46,11 @@ def generate(funcdef: _df.FuncDef):
     )
     jitres = jitlib.link(lljit, repr(funcdef))
     addr = jitres[fn.name]
-    proto = CFUNCTYPE(c_int64, c_int64)
+
+    c_argtys = [emit_c_type(ty) for ty in funcdef.argtys]
+    c_retty = emit_c_type(funcdef.retty)
+
+    proto = CFUNCTYPE(c_retty, *c_argtys)
     ccall = proto(addr)
     jf = JittedFunction(_resource=jitres, address=addr, ccall=ccall)
     return jf
@@ -91,8 +96,9 @@ class LLVMBackend:
             fn = self.module.get_global(fname)
         except KeyError:
             sig = signature(func)
-            nargs = len(sig.parameters)
-            fnty = ir.FunctionType(inttype, [inttype] * nargs)
+            llargtys = tuple([emit_llvm_type(t, self.module) for t in funcdef.argtys])
+            llretty = emit_llvm_type(funcdef.retty, self.module)
+            fnty = ir.FunctionType(llretty, llargtys)
             fn = ir.Function(self.module, fnty, name=fname)
             fn.calling_convention = "fastcc"
             for i, k in enumerate(sig.parameters):
@@ -203,25 +209,6 @@ def _emit_node_ExprNode(node: _df.ExprNode, be: LLVMBackend):
     emitted = [be.emit(arg) for arg in node.args]
     return emit_llvm(node.op, be.builder, *emitted)
 
-    # lhs = be.emit(node.left)
-    # rhs = be.emit(node.right)
-    # if node.op == "<=":
-    #     return be.builder.icmp_signed("<=", lhs, rhs)
-    # elif node.op == ">=":
-    #     return be.builder.icmp_signed(">=", lhs, rhs)
-    # elif node.op == "<":
-    #     return be.builder.icmp_signed("<", lhs, rhs)
-    # elif node.op == ">":
-    #     return be.builder.icmp_signed(">", lhs, rhs)
-    # elif node.op == "-":
-    #     return be.builder.sub(lhs, rhs)
-    # elif node.op == "+":
-    #     return be.builder.add(lhs, rhs)
-    # elif node.op == "*":
-    #     return be.builder.mul(lhs, rhs)
-    # else:
-    #     raise AssertionError(f"not supported {node}")
-
 
 @emit_node.register(_df.CallNode)
 def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
@@ -239,7 +226,7 @@ def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
 @emit_node.register(_df.LiteralNode)
 def _emit_node_LiteralNode(node: _df.LiteralNode, be: LLVMBackend):
     val = node.py_value
-    return emit_llvm_const(node.datatype.get_const_trait(), be.builder, val)
+    return emit_llvm_const(node.datatype, be.builder, val)
 
 
 @emit_node.register(_df.UnpackNode)
@@ -309,31 +296,66 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
     )
 
 
+# ------------------------------ emit_c_type ------------------------------
+
+@singledispatch
+def emit_c_type(datatype: _dt.DataType):
+    raise NotImplementedError(datatype)
+
+@emit_c_type.register
+def _(datatype: _dt.Int64):
+    return c_int64
+
+@emit_c_type.register
+def _(datatype: _dt.Float64):
+    return c_double
+# ------------------------------ emit_llvm_type ------------------------------
+
+
+@singledispatch
+def emit_llvm_type(datatype: _dt.DataType, module: ir.Module):
+    raise NotImplementedError(datatype)
+
+
+@emit_llvm_type.register
+def _(datatype: _dt.IntegerType, module: ir.Module):
+    return ir.IntType(datatype.bitwidth)
+
+@emit_llvm_type.register
+def _(datatype: _dt.FloatType, module: ir.Module):
+    return ir.DoubleType()
+
+
 # ------------------------------ emit_llvm_const ------------------------------
 
 
 @singledispatch
 def emit_llvm_const(
-    dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value
+    datatype: _dt.DataType, builder: ir.IRBuilder, value: ir.Value
 ):
-    raise NotImplementedError(dt)
+    raise NotImplementedError(datatype)
 
 
-@emit_llvm_const.register(_dt.Int64.ConstTrait)
-def _(dt: Type[_dt.DataType], builder: ir.Builder, value: ir.Value):
-    return ir.Constant(ir.IntType(64), value)
+@emit_llvm_const.register
+def _(datatype: _dt.Int64, builder: ir.IRBuilder, value: ir.Value):
+    return ir.Constant(ir.IntType(datatype.bitwidth), value)
+
+@emit_llvm_const.register
+def _(datatype: _dt.Float64, builder: ir.IRBuilder, value: ir.Value):
+    to_type = {32: ir.FloatType(), 64: ir.DoubleType()}[datatype.bitwidth]
+    return ir.Constant(to_type, value)
 
 
 # --------------------------------- emit_llvm ---------------------------------
 
 
 @singledispatch
-def emit_llvm(op: _dt.OpTrait, builder: ir.Builder, *args: ir.Value):
+def emit_llvm(op: _dt.OpTrait, builder: ir.IRBuilder, *args: ir.Value):
     raise NotImplementedError(op)
 
 
-@emit_llvm.register(_dt.IntBinop)
-def _(op: Type[_dt.IntBinop], builder: ir.Builder, lhs: Any, rhs: Any):
+@emit_llvm.register
+def _(op: _dt.IntBinop, builder: ir.IRBuilder, lhs: Any, rhs: Any):
     opimpl = op.py_impl
 
     if opimpl == operator.le:
@@ -350,5 +372,34 @@ def _(op: Type[_dt.IntBinop], builder: ir.Builder, lhs: Any, rhs: Any):
         return builder.add(lhs, rhs)
     elif opimpl == operator.mul:
         return builder.mul(lhs, rhs)
+    else:
+        raise AssertionError(f"not supported {op}")
+
+
+@emit_llvm.register
+def _(op: _dt.IntToFloatCast, builder: ir.IRBuilder, value: ir.Value):
+    to_width = op.to_type.bitwidth
+    to_type = {32: ir.FloatType(), 64: ir.DoubleType()}[to_width]
+    return builder.sitofp(value, to_type)
+
+
+@emit_llvm.register
+def _(op: _dt.FloatBinop, builder: ir.IRBuilder, lhs: Any, rhs: Any):
+    opimpl = op.py_impl
+
+    if opimpl == operator.le:
+        return builder.fcmp_signed("<=", lhs, rhs)
+    elif opimpl == operator.ge:
+        return builder.fcmp_signed(">=", lhs, rhs)
+    elif opimpl == operator.lt:
+        return builder.fcmp_signed("<", lhs, rhs)
+    elif opimpl == operator.gt:
+        return builder.fcmp_signed(">", lhs, rhs)
+    elif opimpl == operator.sub:
+        return builder.fsub(lhs, rhs)
+    elif opimpl == operator.add:
+        return builder.fadd(lhs, rhs)
+    elif opimpl == operator.mul:
+        return builder.fmul(lhs, rhs)
     else:
         raise AssertionError(f"not supported {op}")

@@ -2,18 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial, partialmethod, singledispatch
-from typing import Any, get_type_hints, Callable, Type
+from typing import Any, Callable, get_type_hints
 from inspect import signature
 
 from . import datatypes as _dt
-
-
-Tdatatype = Type[_dt.DataType]
+from . import typing as _tp
 
 
 def _generic_binop(self, other, *, op):
     other = as_node(other)
-    return self.datatype.get_binop(op, self, other)
+    optrait = self.datatype.get_binop(op, self.datatype, other.datatype)
+    return ExprNode(optrait.result_type, optrait, args=(self, other))
 
 
 @dataclass(frozen=True)
@@ -54,12 +53,12 @@ def _call_func(func, argtys):
 @dataclass(frozen=True)
 class FuncNode(RegionNode):
     func: Callable
-    argtys: tuple[Tdatatype, ...]
-    retty: Tdatatype
+    argtys: tuple[_dt.DataType, ...]
+    retty: _dt.DataType
 
     @classmethod
     def make(cls, func):
-        typehints = get_type_hints(func)
+        typehints = _tp.get_annotations(func)
         retty = typehints.pop("return")
         argtys = tuple(typehints.values())
         return cls(func, argtys, retty)
@@ -79,9 +78,14 @@ class FuncNode(RegionNode):
 @dataclass(frozen=True)
 class FuncDef:
     func: Callable
-    argtys: Any
-    retty: Any
+    argtys: tuple[_dt.DataType]
+    retty: _dt.DataType
     node: DFNode
+
+    def __post_init__(self):
+        for x in self.argtys:
+            assert isinstance(x, _dt.DataType)
+        assert isinstance(self.retty, _dt.DataType)
 
 
 def _bind__dt(sig, *args: ValueNode, **kwargs: ValueNode):
@@ -168,7 +172,7 @@ class LoopNode(RegionNode):
 
 @dataclass(frozen=True)
 class CaseExprNode(DFNode):
-    datatype: Tdatatype
+    datatype: _dt.DataType
     pred: DFNode
     cases: tuple[EnterNode]
 
@@ -185,7 +189,7 @@ class CaseNode(RegionNode):
 
 @dataclass(frozen=True)
 class LoopBodyNode(DFNode):
-    datatype: Tdatatype
+    datatype: _dt.DataType
     values: tuple[DFNode]
     scope: dict
 
@@ -205,7 +209,7 @@ class LoopExprNode(DFNode):
 
 @dataclass(frozen=True)
 class UnpackNode(DFNode):
-    datatype: Tdatatype
+    datatype: _dt.DataType
     producer: DFNode
     index: int
 
@@ -218,7 +222,7 @@ loop = LoopNode.make
 
 @dataclass(frozen=True)
 class ValueNode(DFNode):
-    datatype: Tdatatype
+    datatype: _dt.DataType
 
 
 @dataclass(frozen=True)
@@ -238,7 +242,12 @@ def _(val: DFNode):
 
 @as_node.register(int)
 def _(val: int):
-    return LiteralNode(_dt.Int64, val)
+    return LiteralNode(_dt.Int64(), val)
+
+
+@as_node.register(float)
+def _(val: float):
+    return LiteralNode(_dt.Float64(), val)
 
 
 @as_node.register(bool)
@@ -267,7 +276,7 @@ class ExprNode(ValueNode):
 
 @dataclass(frozen=True)
 class CallNode(DFNode):
-    datatype: Tdatatype
+    datatype: _dt.DataType
     func: FuncNode
     args: tuple
     kwargs: dict
@@ -287,7 +296,7 @@ class CallNode(DFNode):
 
 @dataclass(frozen=True)
 class EnterNode(DFNode):
-    datatype: Tdatatype
+    datatype: _dt.DataType
     region: RegionNode
     node: DFNode
     scope: dict[ArgNode, DFNode]
@@ -318,3 +327,9 @@ def _sentry_scope(scope: dict[ArgNode, DFNode] | None):
         for k, v in scope.items():
             assert isinstance(k, ArgNode)
             assert isinstance(v, DFNode)
+
+
+def cast(value: DFNode, to_type: _dt.DataType) -> DFNode:
+    to_type = _dt.ensure_type(to_type)
+    op = to_type.get_cast(value.datatype)
+    return ExprNode(op.result_type, op, args=tuple([value]))
