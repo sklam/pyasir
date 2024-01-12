@@ -38,15 +38,9 @@ class ValueNode(DFNode):
     __lt__ = partialmethod(_generic_binop, op="<")
 
     def __getattr__(self, attr: str):
-        from .structdef import StructType
+        attrop = self.datatype.attribute_lookup(attr)
+        return ExprNode(attrop.result_type, attrop, (self,))
 
-        if isinstance(self.datatype, StructType):
-            attrop = self.datatype._lookup(attr)
-            if attrop is None:
-                raise AttributeError(attr)
-            return ExprNode(attrop.result_type, attrop, (self,))
-        else:
-            raise AttributeError(attr)
 
 
 @dataclass(frozen=True)

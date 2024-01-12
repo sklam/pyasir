@@ -6,11 +6,6 @@ from ..datatypes import DataType, OpTrait
 
 
 class BooleanType(DataType):
-    def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
-        raise NotImplementedError
-
-    def get_cast(self, valtype: DataType) -> OpTrait:
-        raise NotImplementedError
-
+    pass
 
 Bool = BooleanType

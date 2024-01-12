@@ -38,8 +38,6 @@ class IntegerType(DataType):
             raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         return optrait
 
-    def get_cast(self, valtype: DataType) -> OpTrait:
-        raise NotImplementedError
 
 
 class Int64(IntegerType):

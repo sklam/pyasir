@@ -20,7 +20,7 @@ class TypeOpError(ValueError):
     pass
 
 
-class DataType(abc.ABC):
+class DataType:
     __singleton = None
 
     def __new__(cls):
@@ -28,12 +28,11 @@ class DataType(abc.ABC):
             cls.__singleton = object.__new__(cls)
         return cls.__singleton
 
-    @abc.abstractmethod
     def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
-        ...
+        raise NotImplementedError
 
-    @abc.abstractmethod
     def get_cast(self, valtype: DataType) -> OpTrait:
+        raise NotImplementedError
 
     def attribute_lookup(self, attr: str) -> AttrOp:
         raise AttributeError(attr)
