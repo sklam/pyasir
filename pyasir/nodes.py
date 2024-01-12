@@ -25,6 +25,9 @@ class DFNode:
 class ValueNode(DFNode):
     datatype: _dt.DataType
 
+    def __post_init__(self):
+        assert isinstance(self.datatype, _dt.DataType)
+
     __add__ = partialmethod(_generic_binop, op="+")
     __sub__ = partialmethod(_generic_binop, op="-")
     __mul__ = partialmethod(_generic_binop, op="*")
@@ -33,6 +36,17 @@ class ValueNode(DFNode):
     __ge__ = partialmethod(_generic_binop, op=">=")
     __gt__ = partialmethod(_generic_binop, op=">")
     __lt__ = partialmethod(_generic_binop, op="<")
+
+    def __getattr__(self, attr: str):
+        from .structdef import StructType
+
+        if isinstance(self.datatype, StructType):
+            attrop = self.datatype._lookup(attr)
+            if attrop is None:
+                raise AttributeError(attr)
+            return ExprNode(attrop.result_type, attrop, (self,))
+        else:
+            raise AttributeError(attr)
 
 
 @dataclass(frozen=True)
@@ -332,3 +346,9 @@ def cast(value: ValueNode, to_type: _dt.DataType) -> DFNode:
     to_type = _dt.ensure_type(to_type)
     op = to_type.get_cast(value.datatype)
     return ExprNode(op.result_type, op, args=tuple([value]))
+
+
+def make(__dt: _dt.DataType, *args, **kwargs):
+    dt = _dt.ensure_type(__dt)
+    args = dt.get_make(args, kwargs)
+    return ExprNode(dt, _dt.MakeOp(dt), args=tuple(args.values()))

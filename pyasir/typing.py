@@ -1,10 +1,9 @@
-from typing import Annotated, get_type_hints, Callable
-from typing_extensions import _AnnotatedAlias
+from typing import get_type_hints, Any
 from . import datatypes as _dt
 
 
-def get_annotations(func: Callable):
-    hints = get_type_hints(func, include_extras=True)
+def get_annotations(obj: Any):
+    hints = get_type_hints(obj, include_extras=True)
     return {k: _dt.ensure_type(v) for k, v in hints.items()}
     # return {k: parse_type(v, debug=k) for k, v in hints.items()}
 
