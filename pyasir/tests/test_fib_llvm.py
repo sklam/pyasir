@@ -1,9 +1,9 @@
 from pprint import pprint
 
+import pyasir
 from pyasir.be_llvm import generate
 from pyasir.interpret import interpret
 from pyasir import nodes as df
-from pyasir import datatypes as dt
 
 from .test_fib import fib_ir, fib_expect
 
@@ -36,7 +36,9 @@ def fib_tail(n, accum1=1, accum2=1):
 
 
 @df.func
-def _fib_tail_ir(n: dt.Int64, accum1: dt.Int64, accum2: dt.Int64) -> dt.Int64:
+def _fib_tail_ir(
+    n: pyasir.Int64, accum1: pyasir.Int64, accum2: pyasir.Int64
+) -> pyasir.Int64:
     # IR version of fib_tail
     @df.switch(n < 2)
     def swt(n, accum1, accum2):
@@ -55,7 +57,7 @@ def _fib_tail_ir(n: dt.Int64, accum1: dt.Int64, accum2: dt.Int64) -> dt.Int64:
 
 
 @df.func
-def fib_tail_ir(n: dt.Int64) -> dt.Int64:
+def fib_tail_ir(n: pyasir.Int64) -> pyasir.Int64:
     return _fib_tail_ir(n, 1, 1)
 
 

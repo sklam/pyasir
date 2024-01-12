@@ -3,10 +3,6 @@ from typing_extensions import _AnnotatedAlias
 from . import datatypes as _dt
 
 
-int64 = Annotated[int, _dt.Int64()]
-float64 = Annotated[float, _dt.Float64()]
-
-
 def get_annotations(func: Callable):
     hints = get_type_hints(func, include_extras=True)
     return {k: _dt.ensure_type(v) for k, v in hints.items()}

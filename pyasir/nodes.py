@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial, partialmethod, singledispatch
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable
 from inspect import signature
 
+import pyasir
 from . import datatypes as _dt
 from . import typing as _tp
 
@@ -165,7 +166,7 @@ class LoopNode(RegionNode):
         scope = {ArgNode(v.datatype, k): v for k, v in ba.arguments.items()}
 
         body_values = tuple(map(as_node, [cont, *values]))
-        loopbody = LoopBodyNode(_dt._PackedType(), body_values, scope)
+        loopbody = LoopBodyNode(pyasir.Packed(), body_values, scope)
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
         value_nodes = tuple(
             [
@@ -242,17 +243,17 @@ def _(val: ValueNode):
 
 @as_node.register
 def _(val: int):
-    return LiteralNode(_dt.Int64(), val)
+    return LiteralNode(pyasir.Int64(), val)
 
 
 @as_node.register
 def _(val: float):
-    return LiteralNode(_dt.Float64(), val)
+    return LiteralNode(pyasir.Float64(), val)
 
 
 @as_node.register
 def _(val: bool):
-    return LiteralNode(_dt.Bool(), val)
+    return LiteralNode(pyasir.Bool(), val)
 
 
 def as_node_args(args) -> tuple[ValueNode, ...]:

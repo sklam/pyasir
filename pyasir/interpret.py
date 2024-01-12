@@ -8,7 +8,7 @@ from functools import singledispatch
 from pprint import pformat
 
 from . import nodes as _df
-from . import datatypes as _dt
+from .dispatchables.interpret import eval_op
 
 
 def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
@@ -135,26 +135,3 @@ def _eval_node_CallNode(node: _df.CallNode, ctx: Context):
         *[ctx.eval(v) for v in node.args],
         **{k: ctx.eval(v) for k, v in node.kwargs.items()},
     )
-
-
-# -----------------------------eval_op----------------------------------------
-
-
-@singledispatch
-def eval_op(op: _dt.OpTrait, *args: Any):
-    raise NotImplementedError(f"no eval_op is implemented for {op}")
-
-
-@eval_op.register(_dt.IntBinop)
-def _(op: _dt.IntBinop, lhs, rhs):
-    return op.py_impl(lhs, rhs)
-
-
-@eval_op.register(_dt.IntToFloatCast)
-def _(op: _dt.IntToFloatCast, value):
-    return op.py_impl(value)
-
-
-@eval_op.register(_dt.FloatBinop)
-def _(op: _dt.FloatBinop, lhs, rhs):
-    return op.py_impl(lhs, rhs)

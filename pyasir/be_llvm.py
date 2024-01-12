@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import operator
-from typing import Any, Type
+from typing import Any
 from dataclasses import dataclass, replace as _dc_replace
 from inspect import signature
 from functools import singledispatch
 from pprint import pformat
-from ctypes import CFUNCTYPE, c_int64, c_double
+from ctypes import CFUNCTYPE
 
 from llvmlite import ir
 from llvmlite import binding as llvm
 
 from . import nodes as _df
-from . import datatypes as _dt
+
+from pyasir.dispatchables.be_llvm import (
+    emit_llvm,
+    emit_llvm_type,
+    emit_llvm_const,
+)
+from pyasir.dispatchables.ctypes import emit_c_type
 
 
 def generate(funcdef: _df.FuncDef):
@@ -295,119 +301,3 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
     return builder.call(
         printf, [builder.bitcast(gv, printf.type.pointee.args[0]), *args]
     )
-
-
-# ------------------------------ emit_c_type ------------------------------
-
-
-@singledispatch
-def emit_c_type(datatype: _dt.DataType):
-    raise NotImplementedError(datatype)
-
-
-@emit_c_type.register
-def _(datatype: _dt.Int64):
-    return c_int64
-
-
-@emit_c_type.register
-def _(datatype: _dt.Float64):
-    return c_double
-
-
-# ------------------------------ emit_llvm_type ------------------------------
-
-
-@singledispatch
-def emit_llvm_type(datatype: _dt.DataType, module: ir.Module):
-    raise NotImplementedError(datatype)
-
-
-@emit_llvm_type.register
-def _(datatype: _dt.IntegerType, module: ir.Module):
-    return ir.IntType(datatype.bitwidth)
-
-
-@emit_llvm_type.register
-def _(datatype: _dt.FloatType, module: ir.Module):
-    return ir.DoubleType()
-
-
-# ------------------------------ emit_llvm_const ------------------------------
-
-
-@singledispatch
-def emit_llvm_const(
-    datatype: _dt.DataType, builder: ir.IRBuilder, value: ir.Value
-):
-    raise NotImplementedError(datatype)
-
-
-@emit_llvm_const.register
-def _(datatype: _dt.Int64, builder: ir.IRBuilder, value: ir.Value):
-    return ir.Constant(ir.IntType(datatype.bitwidth), value)
-
-
-@emit_llvm_const.register
-def _(datatype: _dt.Float64, builder: ir.IRBuilder, value: ir.Value):
-    to_type = {32: ir.FloatType(), 64: ir.DoubleType()}[datatype.bitwidth]
-    return ir.Constant(to_type, value)
-
-
-# --------------------------------- emit_llvm ---------------------------------
-
-
-@singledispatch
-def emit_llvm(op: _dt.OpTrait, builder: ir.IRBuilder, *args: ir.Value):
-    raise NotImplementedError(op)
-
-
-@emit_llvm.register
-def _(op: _dt.IntBinop, builder: ir.IRBuilder, lhs: Any, rhs: Any):
-    opimpl = op.py_impl
-
-    if opimpl == operator.le:
-        return builder.icmp_signed("<=", lhs, rhs)
-    elif opimpl == operator.ge:
-        return builder.icmp_signed(">=", lhs, rhs)
-    elif opimpl == operator.lt:
-        return builder.icmp_signed("<", lhs, rhs)
-    elif opimpl == operator.gt:
-        return builder.icmp_signed(">", lhs, rhs)
-    elif opimpl == operator.sub:
-        return builder.sub(lhs, rhs)
-    elif opimpl == operator.add:
-        return builder.add(lhs, rhs)
-    elif opimpl == operator.mul:
-        return builder.mul(lhs, rhs)
-    else:
-        raise AssertionError(f"not supported {op}")
-
-
-@emit_llvm.register
-def _(op: _dt.IntToFloatCast, builder: ir.IRBuilder, value: ir.Value):
-    to_width = op.to_type.bitwidth
-    to_type = {32: ir.FloatType(), 64: ir.DoubleType()}[to_width]
-    return builder.sitofp(value, to_type)
-
-
-@emit_llvm.register
-def _(op: _dt.FloatBinop, builder: ir.IRBuilder, lhs: Any, rhs: Any):
-    opimpl = op.py_impl
-
-    if opimpl == operator.le:
-        return builder.fcmp_signed("<=", lhs, rhs)
-    elif opimpl == operator.ge:
-        return builder.fcmp_signed(">=", lhs, rhs)
-    elif opimpl == operator.lt:
-        return builder.fcmp_signed("<", lhs, rhs)
-    elif opimpl == operator.gt:
-        return builder.fcmp_signed(">", lhs, rhs)
-    elif opimpl == operator.sub:
-        return builder.fsub(lhs, rhs)
-    elif opimpl == operator.add:
-        return builder.fadd(lhs, rhs)
-    elif opimpl == operator.mul:
-        return builder.fmul(lhs, rhs)
-    else:
-        raise AssertionError(f"not supported {op}")
