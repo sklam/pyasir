@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial, partialmethod, singledispatch
 from typing import Any, Callable
-from inspect import signature
+from inspect import signature, isgenerator
+from collections.abc import Mapping
+from pprint import PrettyPrinter
 
 import pyasir
 from . import datatypes as _dt
 from . import typing as _tp
+from . import dialect   # reexport
 
 
 def _generic_binop(self, other, *, op):
@@ -42,10 +45,60 @@ class ValueNode(DFNode):
         return ExprNode(attrop.result_type, attrop, (self,))
 
 
+class Scope(Mapping):
+    _values: dict[ArgNode, ValueNode]
+
+    def __init__(self, values):
+        self._values = dict(values)
+
+    def __repr__(self):
+        out = []
+        for k, v in self._values.items():
+            out.append(f"{k.name}:{k.datatype} = {type(v)}")
+        return f"Scope({', '.join(out)})"
+
+    def __getitem__(self, k: ArgNode) -> ValueNode:
+        return self._values[k]
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+
+def _pprint_Scope(self, object, stream, indent, allowance, context, level):
+    assert isinstance(object, Scope)
+    write = stream.write
+    write('Scope{')
+    if self._indent_per_level > 1:
+        write((self._indent_per_level - 1) * ' ')
+    length = len(object)
+    if length:
+        items = [(k.name, v) for k, v in object.items()]
+        self._format_dict_items(items, stream, indent, allowance + 1,
+                                context, level)
+    write('}')
+
+PrettyPrinter._dispatch[Scope.__repr__] = _pprint_Scope
+
 
 @dataclass(frozen=True)
 class RegionNode(DFNode):
-    pass
+    def _pre_call(self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]):
+        args = as_node_args(args)
+        kwargs = as_node_kwargs(kwargs)
+        sig = signature(region_func)
+        ba_types = _bind__dt(sig, *args, **kwargs)
+        ty_args = tuple(ba_types.arguments.values())
+        return args, kwargs, sig, ty_args
+
+    def _call_region(self, region_func, ty_args: tuple[ValueNode]):
+        return _call_func_no_post(self.region_func, ty_args)
+
+    def _prepare_scope(self, sig: signature, args: tuple[ValueError], kwargs: dict[str, ValueNode]) -> Scope:
+        ba = sig.bind(*args, **kwargs)
+        return Scope({ArgNode(v.datatype, k): v for k, v in ba.arguments.items()})
 
 
 def _call_func_no_post(func, argtys):
@@ -56,8 +109,8 @@ def _call_func_no_post(func, argtys):
             for k, t in zip(sig.parameters.keys(), argtys)
         )
     )
-    ret = func(**args.arguments)
-    return ret
+    return func(**args.arguments)
+
 
 
 def _call_func(func, argtys):
@@ -122,13 +175,9 @@ class SwitchNode(RegionNode):
         return cls(pred, func)
 
     def __call__(self, *args: Any, **kwargs: Any):
-        args = as_node_args(args)
-        kwargs = as_node_kwargs(kwargs)
-        sig = signature(self.region_func)
-        ba_types = _bind__dt(sig, *args, **kwargs)
-
-        ty_args = tuple(ba_types.arguments.values())
-        case_nodes = _call_func_no_post(self.region_func, ty_args)
+        [args, kwargs, sig, ty_args] = self._pre_call(self.region_func, args, kwargs)
+        case_nodes = self._call_region(self.region_func, ty_args)
+        # Get case nodes
         nodes = tuple(
             [
                 EnterNode.make(
@@ -138,10 +187,7 @@ class SwitchNode(RegionNode):
             ]
         )
 
-        ba = sig.bind(*args, **kwargs)
-        scope = {
-            ArgNode(v.datatype, k): as_node(v) for k, v in ba.arguments.items()
-        }
+        scope = self._prepare_scope(sig, args, kwargs)
         for n in nodes[1:]:
             if nodes[0].datatype != n.datatype:
                 raise _dt.TypeOpError(
@@ -163,17 +209,12 @@ class LoopNode(RegionNode):
         return cls(func)
 
     def __call__(self, *args: Any, **kwargs: Any):
-        sig = signature(self.region_func)
-        ba_types = _bind__dt(sig, *args, **kwargs)
-        ty_args = tuple(ba_types.arguments.values())
-        nodes = _call_func_no_post(self.region_func, ty_args)
+        [args, kwargs, sig, ty_args] = self._pre_call(self.region_func, args, kwargs)
+        nodes = self._call_region(self.region_func, ty_args)
         cont, values = nodes
-
-        sig = signature(self.region_func)
-        ba = sig.bind(*args, **kwargs)
-        scope = {ArgNode(v.datatype, k): v for k, v in ba.arguments.items()}
-
         body_values = tuple(map(as_node, [cont, *values]))
+
+        scope = self._prepare_scope(sig, args, kwargs)
         loopbody = LoopBodyNode(pyasir.Packed(), body_values, scope)
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
         value_nodes = tuple(
@@ -206,7 +247,7 @@ class CaseNode(RegionNode):
 class LoopBodyNode(DFNode):
     datatype: _dt.DataType
     values: tuple[ValueNode, ...]
-    scope: dict
+    scope: Scope
 
     def __hash__(self):
         return id(self)
@@ -222,7 +263,7 @@ class LoopExprNode(DFNode):
         return iter(self.values)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=False)
 class UnpackNode(ValueNode):
     producer: DFNode
     index: int
@@ -277,6 +318,7 @@ class ArgNode(ValueNode):
     name: str
 
 
+
 @dataclass(frozen=True)
 class ExprNode(ValueNode):
     op: _dt.OpTrait
@@ -306,7 +348,7 @@ class CallNode(ValueNode):
 class EnterNode(ValueNode):
     region: RegionNode
     node: DFNode
-    scope: dict[ArgNode, DFNode]
+    scope: Scope
 
     @classmethod
     def make(cls, region, node, scope):
@@ -329,7 +371,7 @@ class EnterNode(ValueNode):
         return id(self)
 
 
-def _sentry_scope(scope: dict[ArgNode, DFNode] | None):
+def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):
     if scope is not None:
         for k, v in scope.items():
             assert isinstance(k, ArgNode)
@@ -342,7 +384,15 @@ def cast(value: ValueNode, to_type: _dt.DataType) -> DFNode:
     return ExprNode(op.result_type, op, args=tuple([value]))
 
 
-def make(__dt: _dt.DataType, *args, **kwargs):
+def make(__dt: _dt.DataType, *args, **kwargs) -> DFNode:
     dt = _dt.ensure_type(__dt)
     args = dt.get_make(args, kwargs)
     return ExprNode(dt, _dt.MakeOp(dt), args=tuple(args.values()))
+
+
+def call(__func: Callable, *args, **kwargs) -> DFNode:
+    from .typedefs import Function
+    assert callable(__func)
+    fty = Function.lookup(__func)
+    op = fty.get_call(args, kwargs)
+    return CallNode(op.result_type, op, args, kwargs)

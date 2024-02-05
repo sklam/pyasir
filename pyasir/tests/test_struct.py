@@ -4,7 +4,6 @@ from pyasir.interpret import interpret
 from pyasir.be_llvm import generate
 
 from pyasir import Struct
-from typing import no_type_check
 
 
 @Struct
@@ -20,7 +19,7 @@ def udt(x: pyasir.Int64) -> pyasir.Float64:
     return df.cast(struct.x, pyasir.Float64) + struct.y
 
 
-def test():
+def test_struct_llvm():
     node = udt.build_node()
 
     arg = 123
@@ -31,6 +30,3 @@ def test():
     print(got)
     assert expect == got
 
-
-if __name__ == "__main__":
-    test()

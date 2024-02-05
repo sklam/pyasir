@@ -75,7 +75,7 @@ def eval_node(node: _df.DFNode, ctx: Context):
     raise NotImplementedError(f"{type(node)}:\n{pformat(node)}")
 
 
-@eval_node.register(_df.ArgNode)
+@eval_node.register
 def _eval_node_ArgNode(node: _df.ArgNode, ctx: Context):
     v = ctx.scope[node]
     if isinstance(v, Data):
@@ -83,18 +83,18 @@ def _eval_node_ArgNode(node: _df.ArgNode, ctx: Context):
     return Data(v)
 
 
-@eval_node.register(_df.LiteralNode)
+@eval_node.register
 def _eval_node_LiteralNode(node: _df.LiteralNode, ctx: Context):
     return Data(node.py_value)
 
 
-@eval_node.register(_df.EnterNode)
+@eval_node.register
 def _eval_node_EnterNode(node: _df.EnterNode, ctx: Context):
     scope = {k: ctx.eval(v) for k, v in node.scope.items()}
     return ctx.nested_call(node.node, scope)
 
 
-@eval_node.register(_df.CaseExprNode)
+@eval_node.register
 def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     pred = ctx.eval(node.pred).value
     for case in node.cases:
@@ -103,19 +103,19 @@ def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     raise AssertionError(f"no matching case for pred={pred}:\n{pformat(node)}")
 
 
-@eval_node.register(_df.ExprNode)
+@eval_node.register
 def _eval_node_ExprNode(node: _df.ExprNode, ctx: Context):
     evaled = [ctx.eval(arg).value for arg in node.args]
     return Data(eval_op(node.op, *evaled))
 
 
-@eval_node.register(_df.UnpackNode)
+@eval_node.register
 def _eval_node_UnpackNode(node: _df.UnpackNode, ctx: Context):
     values = ctx.eval(node.producer)
     return values.value[node.index]
 
 
-@eval_node.register(_df.LoopBodyNode)
+@eval_node.register
 def _eval_node_LoopBodyNode(node: _df.LoopBodyNode, ctx: Context):
     scope = node.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
@@ -128,10 +128,16 @@ def _eval_node_LoopBodyNode(node: _df.LoopBodyNode, ctx: Context):
     return Data(values)
 
 
-@eval_node.register(_df.CallNode)
+@eval_node.register
 def _eval_node_CallNode(node: _df.CallNode, ctx: Context):
-    return _eval_funcdef(
-        node.func.build_node(),
-        *[ctx.eval(v) for v in node.args],
-        **{k: ctx.eval(v) for k, v in node.kwargs.items()},
-    )
+    from .typedefs.functions import CallOp
+    args= [ctx.eval(v) for v in node.args]
+    kwargs = {k: ctx.eval(v) for k, v in node.kwargs.items()}
+    if isinstance(node.func, _df.FuncDef):
+        return _eval_funcdef(node.func.build_node(), *args, **kwargs)
+    elif isinstance(node.func, CallOp):
+        args = [v.value for v in args]
+        kwargs = {k: v.value for k, v in kwargs.items()}
+        return Data(eval_op(node.func, (args, kwargs)))
+    else:
+        raise NotImplementedError
