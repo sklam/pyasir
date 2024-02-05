@@ -12,7 +12,7 @@ def forloop(n: Int64) -> Int64:
 
     @pir.dialect.py.forloop
     def loop(i, c):
-        return i, (c + i,)
+        return i, c + i
 
     (i, c) = loop(iterator, c)
     return i * c

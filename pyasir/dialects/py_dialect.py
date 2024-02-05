@@ -29,7 +29,7 @@ class ForLoopNode(RegionNode):
         [args, kwargs, sig, ty_args] = self._pre_call(self.region_func, args, kwargs)
 
         nodes = self._call_region(self.region_func, (ty_args[0].element, *ty_args[1:]))
-        ind, values = nodes
+        ind, *values = nodes
         body_values = tuple(map(as_node, [ind, *values]))
 
         scope = self._prepare_scope(sig, args, kwargs)
