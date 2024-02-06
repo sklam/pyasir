@@ -6,6 +6,13 @@ def do_sum(n: Int64) -> Int64:
     for i in range(n):
         # print('i =', i)
         c += i
+
+    if c < 10:
+        c += 10
+
+
+    while c < 10:
+        c += 10
     return c
 
 

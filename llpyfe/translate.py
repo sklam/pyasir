@@ -188,8 +188,88 @@ $args = loop($args)
 
 
 @_mypy_to_ast.register
+def _(tree: _mypy.IfStmt) -> _ASTLike:
+    [pred_tree] = tree.expr
+    [body_tree] = tree.body
+    pred_expr = mypy_to_ast(pred_tree)
+    body_block = mypy_to_ast(body_tree)
+    assert tree.else_body is None
+
+    modified_names = find_loaded_names(body_block.statements)
+    repl = {
+        "$args": ', '.join(modified_names),
+        "$pred": pred_expr,
+        "$body": body_block,
+    }
+
+    return ast_template("""
+@pir.switch($pred)
+def switch($args):
+    @pir.case(1)
+    def ifblk($args):
+        $body
+        return $args
+
+    @pir.case(0)
+    def elseblk($args):
+        return $args
+
+    yield ifblk
+    yield elseblk
+
+$args = switch($args)
+        """,
+        repl
+
+    )
+
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.WhileStmt) -> _ASTLike:
+    pred_tree = tree.expr
+    body_tree = tree.body
+    pred_expr = mypy_to_ast(pred_tree)
+    body_block = mypy_to_ast(body_tree)
+    assert tree.else_body is None
+
+    modified_names = find_loaded_names(body_block.statements)
+    repl = {
+        "$args": ', '.join(modified_names),
+        "$pred": pred_expr,
+        "$body": body_block,
+    }
+
+    return ast_template("""
+@pir.dialect.py.whileloop($pred)
+def loop_region($args):
+    $body
+    return $args
+
+$args = loop_region($args)
+        """,
+        repl
+
+    )
+
+
+@_mypy_to_ast.register
 def _(tree: _mypy.ExpressionStmt) -> _ASTLike:
     return mypy_to_ast(tree.expr)
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.ComparisonExpr) -> _ASTLike:
+    [opstr] = tree.operators
+    [lhs, rhs] = map(mypy_to_ast, tree.operands)
+    repl = {
+        "$lhs": lhs,
+        "$rhs": rhs,
+    }
+    return ast_template(
+        f"$lhs {opstr} $rhs",
+        repl,
+    )
 
 
 @_mypy_to_ast.register
