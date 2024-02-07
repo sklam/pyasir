@@ -3,4 +3,5 @@ class _Type:
 
 
 class Int64(_Type):
-    pass
+    __pyasir_type__ = "pyasir.Int64"
+

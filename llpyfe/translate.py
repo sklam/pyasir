@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import importlib
 import mypy.nodes as _mypy
 import mypy.types as _mypyt
 import textwrap
@@ -73,6 +75,12 @@ class Translator:
         print("=" * 80)
         return source
 
+    def get_import_lines(self) -> str:
+        return """
+import pyasir
+from pyasir import nodes as __pir__
+"""
+
 
 def mypy_to_ast(tree: _mypy.Node) -> _ASTLike:
     out = _mypy_to_ast(tree)
@@ -104,6 +112,13 @@ def find_loaded_names(block: list[ast.stmt]) -> frozenset[str]:
     return finder.get()
 
 
+def load_pyasir_type(tyname: str):
+    assert isinstance(tyname, str)
+    module_path, obj_name = tyname.rsplit('.', 1)
+    module = importlib.import_module(module_path)
+    tyclass = getattr(module, obj_name)
+    return tyclass.__pyasir_type__
+
 
 @singledispatch
 def _mypy_to_ast(tree: _mypy.Node) -> _ASTLike:
@@ -119,17 +134,21 @@ def _(tree: _mypy.FuncDef) -> _ASTLike:
     prepared_args = []
     for arg in arg_pos:
         ty = calltype.argument_by_name(arg).typ
-        prepared_args.append(f"{arg}: {ty}")
+        pirty = load_pyasir_type(str(ty))
+        prepared_args.append(f"{arg}: {pirty}")
+
+    pir_retty = load_pyasir_type(str(calltype.ret_type))
 
     repl = {
         "$name": tree.name,
         "$args": ", ".join(prepared_args),
         "$body": mypy_to_ast(tree.body),
+        "$retty": pir_retty,
     }
     nodes = ast_template(
         """
-@pir.func
-def $name($args):
+@__pir__.func
+def $name($args) -> $retty:
     $body
 """,
         repl,
@@ -156,6 +175,12 @@ def _(tree: _mypy.AssignmentStmt) -> _ASTLike:
     return tree
 
 
+def prepare_iterator_call(iter_expr: _mypy.CallExpr) -> tuple[ast.AST, list[ast.AST]]:
+    callee = iter_expr.callee
+    args = iter_expr.args
+    return mypy_to_ast(callee), list(map(mypy_to_ast, args))
+
+
 @_mypy_to_ast.register
 def _(tree: _mypy.ForStmt) -> _ASTLike:
     index = tree.index
@@ -169,18 +194,26 @@ def _(tree: _mypy.ForStmt) -> _ASTLike:
     names.remove(index_name)
     more = tuple(names)
 
+    iter_callee, iter_args = prepare_iterator_call(iter_expr)
+
     repl = {
         "$args": ', '.join([index_name, *more]),
+        "$loopargs": ', '.join(["iterator", *more]),
+        "$iter_callee": iter_callee,
+        "$iter_args": ', '.join(ast.unparse(iter_args)),
         "$iter": mypy_to_ast(iter_expr),
         "$body": body_block,
     }
     tree = ast_template(
         """
-@pir.dialect.py.forloop
+iterator = __pir__.call($iter_callee, $iter_args)
+
+@__pir__.dialect.py.forloop
 def loop($args):
     $body
     return $args
-$args = loop($args)
+
+$args = loop($loopargs)
 """,
         repl,
     )
@@ -203,14 +236,14 @@ def _(tree: _mypy.IfStmt) -> _ASTLike:
     }
 
     return ast_template("""
-@pir.switch($pred)
+@__pir__.switch($pred)
 def switch($args):
-    @pir.case(1)
+    @__pir__.case(1)
     def ifblk($args):
         $body
         return $args
 
-    @pir.case(0)
+    @__pir__.case(0)
     def elseblk($args):
         return $args
 
@@ -241,7 +274,7 @@ def _(tree: _mypy.WhileStmt) -> _ASTLike:
     }
 
     return ast_template("""
-@pir.dialect.py.whileloop($pred)
+@__pir__.dialect.py.whileloop($pred)
 def loop_region($args):
     $body
     return $args

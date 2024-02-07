@@ -7,12 +7,9 @@ def do_sum(n: Int64) -> Int64:
         # print('i =', i)
         c += i
 
-    if c < 10:
-        c += 10
+    if c < 100:
+        c += 100
 
-
-    while c < 10:
-        c += 10
     return c
 
 

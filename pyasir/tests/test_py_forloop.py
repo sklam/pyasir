@@ -1,4 +1,3 @@
-import pyasir
 from pyasir import nodes as pir
 from pyasir import Int64
 from pyasir.interpret import interpret
