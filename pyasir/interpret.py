@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-import operator
+from collections import ChainMap
 from inspect import signature
 from functools import singledispatch
 from pprint import pformat
@@ -60,13 +60,13 @@ class Context:
         return res
 
     def nested_call(self, node: _df.DFNode, scope: dict[str, Any]) -> Data:
-        nested = Context(scope=scope, cache={})
+        nested = Context(scope=ChainMap(scope, self.scope), cache={})
         return nested.eval(node)
 
     def do_loop(
         self, *values: _df.DFNode, scope: dict[str, Any]
     ) -> tuple[Data, ...]:
-        nested = Context(scope=scope, cache={})
+        nested = Context(scope=ChainMap(scope, self.scope), cache={})
         return tuple([nested.eval(v) for v in values])
 
 
