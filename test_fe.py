@@ -27,21 +27,24 @@ def fe_compile():
     return source
 
 
-def run_function(source):
+def run_function(source, args):
     global_dict = local_dict = {}
     exec(source, global_dict, local_dict)
     func = global_dict[the_func]
     node = func.build_node()
     # pprint(node)
 
-    res = interpret(node, 5)
+    res = interpret(node, *args)
     return res
 
 
 def test():
     source = fe_compile()
-    res = run_function(source)
-    assert res == sum(range(5)) + 100
+    args = (5,)
+    res = run_function(source, args)
+
+    from llpy_hello import do_sum
+    assert res == do_sum(*args)
 
 
 if __name__ == "__main__":

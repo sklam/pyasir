@@ -274,12 +274,25 @@ def _(tree: _mypy.WhileStmt) -> _ASTLike:
     }
 
     return ast_template("""
-@__pir__.dialect.py.whileloop($pred)
-def loop_region($args):
-    $body
-    return $args
+@__pir__.switch($pred)
+def swt_while($args) :
+    @__pir__.case(1)
+    def case1($args):
+        @__pir__.loop
+        def loop($args):
+            $body
+            return $pred, ($args,)
+        ($args,) = loop($args)
+        return $args
 
-$args = loop_region($args)
+    @__pir__.case(0)
+    def case0($args):
+        return $args
+
+    yield case1
+    yield case0
+
+$args = swt_while($args)
         """,
         repl
 

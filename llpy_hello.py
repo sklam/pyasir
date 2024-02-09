@@ -10,6 +10,9 @@ def do_sum(n: Int64) -> Int64:
     if c < 100:
         c += 100
 
+    while c < 200:
+        c += 13
+
     return c
 
 
