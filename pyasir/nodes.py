@@ -132,7 +132,7 @@ class RegionNode(DFNode):
 
     def _call_region(
         self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]
-    ) -> tuple[Scope, tuple[ValueNode]]:
+    ) -> tuple[Scope, ValueNode | Iterable[ValueNode]]:
         ab = ArgBinder(region_func)
         ab.bind_to_valuenodes(args, kwargs)
         arguments = ab.get_argnodes()
@@ -247,7 +247,7 @@ class LoopNode(RegionNode):
         [args, kwargs] = self._pre_call(args, kwargs)
         scope, nodes = self._call_region(self.region_func, args, kwargs)
         cont, values = nodes
-        body_values = tuple(map(as_node, [cont, *values]))
+        body_values = tuple([cont, *values])
 
         loopbody = LoopBodyNode(pyasir.Packed(), body_values, scope)
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)

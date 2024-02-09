@@ -31,8 +31,6 @@ class ForLoopNode(RegionNode):
         return cls(func)
 
     def __call__(self, *args: Any, **kwargs: Any):
-        from ..nodes import as_node
-
         [args, kwargs] = self._pre_call(args, kwargs)
         assert len(args)
         indarg = node_replace_attrs(args[0], datatype=args[0].datatype.element)
@@ -40,7 +38,7 @@ class ForLoopNode(RegionNode):
             self.region_func, (indarg, *args[1:]), kwargs
         )
         ind, *values = nodes
-        body_values = tuple(map(as_node, [ind, *values]))
+        body_values = tuple([ind, *values])
 
         loopbody = ForLoopBodyNode(pyasir.Packed(), body_values, scope)
         value_nodes = tuple(
