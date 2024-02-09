@@ -30,8 +30,10 @@ class StructType(_dt.DataType):
     __struct_annotations__: tuple[tuple[str, _dt.DataType], ...]
 
     def get_make(self, args, kwargs):
-        sig = Signature(Parameter(k, Parameter.POSITIONAL_OR_KEYWORD)
-                        for k, _t in self.__struct_annotations__)
+        sig = Signature(
+            Parameter(k, Parameter.POSITIONAL_OR_KEYWORD)
+            for k, _t in self.__struct_annotations__
+        )
         ba = sig.bind(*args, **kwargs)
         args = ba.arguments
         return args

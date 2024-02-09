@@ -35,9 +35,7 @@ class ForLoopNode(RegionNode):
     def __call__(self, *args: Any, **kwargs: Any):
         from ..nodes import as_node
 
-        [args, kwargs, sig, ty_args] = self._pre_call(
-            self.region_func, args, kwargs
-        )
+        [args, kwargs] = self._pre_call(args, kwargs)
         assert len(args)
         indarg = node_replace_attrs(args[0], datatype=args[0].datatype.element)
         scope, nodes = self._call_region(

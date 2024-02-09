@@ -39,7 +39,6 @@ class IntegerType(DataType):
         return optrait
 
 
-
 class Int64(IntegerType):
     bitwidth = 64
 

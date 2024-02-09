@@ -29,4 +29,3 @@ def test_struct_llvm():
     got = jt(arg)
     print(got)
     assert expect == got
-

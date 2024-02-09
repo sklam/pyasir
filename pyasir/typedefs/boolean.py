@@ -8,4 +8,5 @@ from ..datatypes import DataType, OpTrait
 class BooleanType(DataType):
     pass
 
+
 Bool = BooleanType
