@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace as _dc_replace
 from functools import partial, partialmethod, singledispatch
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from inspect import signature, isgenerator
 from collections.abc import Mapping
 from pprint import PrettyPrinter
@@ -10,7 +11,7 @@ from pprint import PrettyPrinter
 import pyasir
 from . import datatypes as _dt
 from . import typing as _tp
-from . import dialect   # reexport
+from . import dialect  # reexport
 
 
 def _generic_binop(self, other, *, op):
@@ -24,12 +25,16 @@ class DFNode:
     ...
 
 
+def node_replace_attrs(node: DFNode, **attrs):
+    return _dc_replace(node, **attrs)
+
+
 @dataclass(frozen=True)
 class ValueNode(DFNode):
     datatype: _dt.DataType
 
     def __post_init__(self):
-        assert isinstance(self.datatype, _dt.DataType)
+        assert isinstance(self.datatype, _dt.DataType), type(self.datatype)
 
     __add__ = partialmethod(_generic_binop, op="+")
     __sub__ = partialmethod(_generic_binop, op="-")
@@ -70,22 +75,26 @@ class Scope(Mapping):
 def _pprint_Scope(self, object, stream, indent, allowance, context, level):
     assert isinstance(object, Scope)
     write = stream.write
-    write('Scope{')
+    write("Scope{")
     if self._indent_per_level > 1:
-        write((self._indent_per_level - 1) * ' ')
+        write((self._indent_per_level - 1) * " ")
     length = len(object)
     if length:
-        items = [(k.name, v) for k, v in object.items()]
-        self._format_dict_items(items, stream, indent, allowance + 1,
-                                context, level)
-    write('}')
+        items = [(k, v) for k, v in object.items()]
+        self._format_dict_items(
+            items, stream, indent, allowance + 1, context, level
+        )
+    write("}")
+
 
 PrettyPrinter._dispatch[Scope.__repr__] = _pprint_Scope
 
 
 @dataclass(frozen=True)
 class RegionNode(DFNode):
-    def _pre_call(self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]):
+    def _pre_call(
+        self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]
+    ):
         args = as_node_args(args)
         kwargs = as_node_kwargs(kwargs)
         sig = signature(region_func)
@@ -93,29 +102,61 @@ class RegionNode(DFNode):
         ty_args = tuple(ba_types.arguments.values())
         return args, kwargs, sig, ty_args
 
-    def _call_region(self, region_func, ty_args: tuple[ValueNode]):
-        return _call_func_no_post(self.region_func, ty_args)
+    def _call_region(
+        self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]
+    ) -> tuple[Scope, tuple[ValueNode]]:
+        idx2pos = {i: v for i, v in enumerate(args)}
+        kw2idx = {k: i for i, k in enumerate(kwargs)}
+        idx2kws = {i: k for k, i in kw2idx.items()}
+        sig = signature(region_func)
+        argmap = sig.bind(*idx2pos, **kw2idx).arguments
 
-    def _prepare_scope(self, sig: signature, args: tuple[ValueError], kwargs: dict[str, ValueNode]) -> Scope:
+        def lookup(idx):
+            if idx < len(idx2pos):
+                return idx2pos[idx]
+            else:
+                return idx2kws[idx]
+
+        args = {}
+        scope = {}
+        for k, v in argmap.items():
+            valnode = lookup(v)
+            args[k] = argnode = ArgNode(valnode.datatype, name=k)
+            scope[argnode] = valnode
+
+        res = region_func(**args)
+        if not isgenerator(res):
+            res = as_node(res)
+        return scope, res
+
+    def _prepare_scope(
+        self,
+        sig: signature,
+        args: tuple[ValueError],
+        kwargs: dict[str, ValueNode],
+    ) -> Scope:
         ba = sig.bind(*args, **kwargs)
-        return Scope({ArgNode(v.datatype, k): v for k, v in ba.arguments.items()})
+        return Scope(
+            {ArgNode(v.datatype, k): v for k, v in ba.arguments.items()}
+        )
 
 
 def _call_func_no_post(func, argtys):
     sig = signature(func)
-    args = sig.bind(
-        *(
+    argnodes = tuple(
+        [
             ArgNode(datatype=t, name=k)
             for k, t in zip(sig.parameters.keys(), argtys)
-        )
+        ]
     )
-    return func(**args.arguments)
-
+    args = sig.bind(*argnodes)
+    res = func(**args.arguments)
+    return argnodes, res
 
 
 def _call_func(func, argtys):
-    ret = _call_func_no_post(func, argtys)
-    return as_node(ret)
+    argnodes, ret = _call_func_no_post(func, argtys)
+    return argnodes, as_node(ret)
 
 
 @dataclass(frozen=True)
@@ -132,12 +173,13 @@ class FuncNode(RegionNode):
         return cls(func, argtys, retty)
 
     def build_node(self) -> FuncDef:
-        node = _call_func(self.func, self.argtys)
+        argnodes, node = _call_func(self.func, self.argtys)
         if node.datatype != self.retty:
             raise _dt.TypeOpError(
                 f"FuncDef returned {node.datatype} instead of {self.retty}"
             )
-        return FuncDef(self.func, self.argtys, self.retty, node)
+
+        return FuncDef(self.func, self.argtys, self.retty, argnodes, node)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return CallNode.make(self, *args, **kwargs)
@@ -148,6 +190,7 @@ class FuncDef:
     func: Callable
     argtys: tuple[_dt.DataType, ...]
     retty: _dt.DataType
+    argnodes: tuple[ArgNode, ...]
     node: DFNode
 
     def __post_init__(self):
@@ -175,29 +218,28 @@ class SwitchNode(RegionNode):
         return cls(pred, func)
 
     def __call__(self, *args: Any, **kwargs: Any):
-        [args, kwargs, sig, ty_args] = self._pre_call(self.region_func, args, kwargs)
-        case_nodes = self._call_region(self.region_func, ty_args)
-        # Get case nodes
-        nodes = tuple(
-            [
-                EnterNode.make(
-                    cn, _call_func(cn.case_func, ty_args), scope=None
-                )
-                for cn in case_nodes
-            ]
+        [args, kwargs, sig, ty_args] = self._pre_call(
+            self.region_func, args, kwargs
         )
+        case_nodes: Iterable[CaseNode]
+        _scope, case_nodes = self._call_region(self.region_func, args, kwargs)
+        # Get case nodes
+        nodes = []
+        for cn in case_nodes:
+            case_scope, case_res = self._call_region(cn.case_func, args, kwargs)
+            nodes.append(EnterNode.make(cn, case_res, scope=case_scope))
 
-        scope = self._prepare_scope(sig, args, kwargs)
         for n in nodes[1:]:
             if nodes[0].datatype != n.datatype:
                 raise _dt.TypeOpError(
                     f"incompatible type {n.datatype}; expect {nodes[0].datatype}"
                 )
-        return EnterNode.make(
+        out = EnterNode.make(
             self,
-            CaseExprNode(nodes[0].datatype, self.pred_node, nodes),
-            scope=scope,
+            CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes)),
+            scope={},
         )
+        return out
 
 
 @dataclass(frozen=True)
@@ -209,12 +251,13 @@ class LoopNode(RegionNode):
         return cls(func)
 
     def __call__(self, *args: Any, **kwargs: Any):
-        [args, kwargs, sig, ty_args] = self._pre_call(self.region_func, args, kwargs)
-        nodes = self._call_region(self.region_func, ty_args)
+        [args, kwargs, sig, ty_args] = self._pre_call(
+            self.region_func, args, kwargs
+        )
+        scope, nodes = self._call_region(self.region_func, args, kwargs)
         cont, values = nodes
         body_values = tuple(map(as_node, [cont, *values]))
 
-        scope = self._prepare_scope(sig, args, kwargs)
         loopbody = LoopBodyNode(pyasir.Packed(), body_values, scope)
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
         value_nodes = tuple(
@@ -231,6 +274,9 @@ class CaseExprNode(DFNode):
     datatype: _dt.DataType
     pred: DFNode
     cases: tuple[EnterNode, ...]
+
+    def __post_init__(self):
+        assert isinstance(self.cases, tuple)
 
 
 @dataclass(frozen=True)
@@ -305,6 +351,11 @@ def _(val: bool):
     return LiteralNode(pyasir.Bool(), val)
 
 
+@as_node.register
+def _(val: tuple):
+    return tuple(map(as_node, val))
+
+
 def as_node_args(args) -> tuple[ValueNode, ...]:
     return tuple([as_node(v) for v in args])
 
@@ -313,10 +364,22 @@ def as_node_kwargs(kwargs) -> dict[str, ValueNode]:
     return {k: as_node(v) for k, v in kwargs.items()}
 
 
+def _argnode_uuid():
+    return str(uuid.uuid4())
+
+
 @dataclass(frozen=True)
 class ArgNode(ValueNode):
     name: str
 
+    def __eq__(self, other):
+        return id(self) == id(other)
+
+    def __hash__(self):
+        return hash(id(self))
+
+    def __repr__(self):
+        return f"ArgNode({self.name!r} at {hex(id(self))})"
 
 
 @dataclass(frozen=True)
@@ -392,6 +455,7 @@ def make(__dt: _dt.DataType, *args, **kwargs) -> DFNode:
 
 def call(__func: Callable, *args, **kwargs) -> DFNode:
     from .typedefs import Function
+
     assert callable(__func)
     fty = Function.lookup(__func)
     op = fty.get_call(args, kwargs)

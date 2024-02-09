@@ -56,4 +56,4 @@ def test_fib_ir():
 
 
 if __name__ == "__main__":
-    test_fib_ir()
+    test_fib_ir_once()

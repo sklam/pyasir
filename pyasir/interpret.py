@@ -19,10 +19,7 @@ def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
 def _eval_funcdef(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Data:
     sig = signature(funcdef.func)
     ba = sig.bind(*args, **kwargs)
-    args = {
-        _df.ArgNode(t, k): v
-        for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)
-    }
+    args = {an: ba.arguments[an.name] for an in funcdef.argnodes}
     ctx = Context(scope=args, cache={})
     res = ctx.eval(funcdef.node)
     return res
@@ -99,7 +96,7 @@ def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     pred = ctx.eval(node.pred).value
     for case in node.cases:
         if pred == case.region.case_pred.py_value:
-            return ctx.eval(case.node)
+            return ctx.eval(case)
     raise AssertionError(f"no matching case for pred={pred}:\n{pformat(node)}")
 
 
@@ -131,9 +128,10 @@ def _eval_node_LoopBodyNode(node: _df.LoopBodyNode, ctx: Context):
 @eval_node.register
 def _eval_node_CallNode(node: _df.CallNode, ctx: Context):
     from .typedefs.functions import CallOp
-    args= [ctx.eval(v) for v in node.args]
+
+    args = [ctx.eval(v) for v in node.args]
     kwargs = {k: ctx.eval(v) for k, v in node.kwargs.items()}
-    if isinstance(node.func, _df.FuncDef):
+    if isinstance(node.func, _df.FuncNode):
         return _eval_funcdef(node.func.build_node(), *args, **kwargs)
     elif isinstance(node.func, CallOp):
         args = [v.value for v in args]

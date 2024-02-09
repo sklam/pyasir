@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from inspect import signature
 from pprint import pprint
 
-from pyasir.nodes import RegionNode, EnterNode, DFNode, ArgNode, ValueNode, UnpackNode
+from pyasir.nodes import (
+    RegionNode,
+    EnterNode,
+    DFNode,
+    ArgNode,
+    ValueNode,
+    UnpackNode,
+    node_replace_attrs,
+)
+
 from pyasir import datatypes as _dt
 import pyasir
 from .registry import registry
@@ -26,13 +35,17 @@ class ForLoopNode(RegionNode):
     def __call__(self, *args: Any, **kwargs: Any):
         from ..nodes import as_node
 
-        [args, kwargs, sig, ty_args] = self._pre_call(self.region_func, args, kwargs)
-
-        nodes = self._call_region(self.region_func, (ty_args[0].element, *ty_args[1:]))
+        [args, kwargs, sig, ty_args] = self._pre_call(
+            self.region_func, args, kwargs
+        )
+        assert len(args)
+        indarg = node_replace_attrs(args[0], datatype=args[0].datatype.element)
+        scope, nodes = self._call_region(
+            self.region_func, (indarg, *args[1:]), kwargs
+        )
         ind, *values = nodes
         body_values = tuple(map(as_node, [ind, *values]))
 
-        scope = self._prepare_scope(sig, args, kwargs)
         loopbody = ForLoopBodyNode(pyasir.Packed(), body_values, scope)
         value_nodes = tuple(
             [
@@ -62,15 +75,14 @@ class ForLoopExprNode(DFNode):
         return iter(self.values)
 
 
-
 PyDialect.forloop = ForLoopNode.make
 
 
-registry['py'] = PyDialect
-
+registry["py"] = PyDialect
 
 
 # ---------------------------------------------------------------------------
+
 
 @eval_node.register
 def _eval_node_ForLoopBodyNode(node: ForLoopBodyNode, ctx: Context):
@@ -88,9 +100,6 @@ def _eval_node_ForLoopBodyNode(node: ForLoopBodyNode, ctx: Context):
             return True, ind
 
     loop_keys = list(inner_scope.keys())
-    first_key = loop_keys[0]
-    loop_keys[0] = ArgNode(datatype=first_key.datatype.element,
-                           name=first_key.name)
 
     while True:
         ok, ind = advance(iterator)
@@ -102,4 +111,3 @@ def _eval_node_ForLoopBodyNode(node: ForLoopBodyNode, ctx: Context):
         scope_values = ctx.do_loop(*node.values, scope=scope)
 
     return Data(tuple(scope_values))
-

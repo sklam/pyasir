@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import operator
+from collections import ChainMap
 from typing import Any
 from dataclasses import dataclass, replace as _dc_replace
 from inspect import signature
@@ -116,8 +116,8 @@ class LLVMBackend:
 
             ba = sig.bind(*fn.args)
             args = {
-                _df.ArgNode(t, k): v
-                for (k, v), t in zip(ba.arguments.items(), funcdef.argtys)
+                argnode: ba.arguments[argnode.name]
+                for argnode in funcdef.argnodes
             }
             be = LLVMBackend(
                 module=self.module, scope=args, builder=builder, cache={}
@@ -139,13 +139,13 @@ class LLVMBackend:
     def nested_call(
         self, node: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]
     ) -> ir.Value:
-        nested = _dc_replace(self, scope=scope, cache={})
+        nested = _dc_replace(self, scope=ChainMap(scope, self.scope), cache={})
         return nested.emit(node)
 
     def do_loop(
         self, *values: _df.DFNode, scope: dict[str, Any]
     ) -> tuple[ir.Value, tuple[ir.Value, ...]]:
-        nested = _dc_replace(self, scope=scope, cache={})
+        nested = _dc_replace(self, scope=ChainMap(scope, self.scope), cache={})
         pred, *values = [nested.emit(v) for v in values]
         return pred, values
 
@@ -163,10 +163,8 @@ def _emit_node_ArgNode(node: _df.ArgNode, be: LLVMBackend):
 
 @emit_node.register(_df.EnterNode)
 def _emit_node_EnterNode(node: _df.EnterNode, be: LLVMBackend):
-    if node.scope is None:
-        scope = be.scope
-    else:
-        scope = {k: be.emit(v) for k, v in node.scope.items()}
+    assert node.scope is not None
+    scope = {k: be.emit(v) for k, v in node.scope.items()}
     return be.nested_call(node.node, scope)
 
 
