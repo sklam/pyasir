@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import ChainMap
 from typing import Any
 from dataclasses import dataclass, replace as _dc_replace
-from inspect import signature
 from functools import singledispatch
 from pprint import pformat
 from ctypes import CFUNCTYPE
@@ -95,12 +94,9 @@ class LLVMBackend:
     def emit_funcdef(self, funcdef: _df.FuncDef):
         func = funcdef.func
         fname = func.__name__
-        sig = signature(func)
-
         try:
             fn = self.module.get_global(fname)
         except KeyError:
-            sig = signature(func)
             llargtys = tuple(
                 [emit_llvm_type(t, self.module) for t in funcdef.argtys]
             )
@@ -108,19 +104,15 @@ class LLVMBackend:
             fnty = ir.FunctionType(llretty, llargtys)
             fn = ir.Function(self.module, fnty, name=fname)
             fn.calling_convention = "fastcc"
-            for i, k in enumerate(sig.parameters):
-                fn.args[i].name = k
+            for i, an in enumerate(funcdef.argnodes):
+                fn.args[i].name = an.name
 
             # define the function body
             builder = ir.IRBuilder(fn.append_basic_block("entry"))
 
-            ba = sig.bind(*fn.args)
-            args = {
-                argnode: ba.arguments[argnode.name]
-                for argnode in funcdef.argnodes
-            }
+            scope = funcdef.bind_scope(fn.args, {})
             be = LLVMBackend(
-                module=self.module, scope=args, builder=builder, cache={}
+                module=self.module, scope=scope, builder=builder, cache={}
             )
             res = be.emit(funcdef.node)
             be.builder.ret(res)
@@ -223,8 +215,8 @@ def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
     inner_be = _dc_replace(be, scope={}, cache={})
     fn = inner_be.emit_funcdef(funcdef)
 
-    ba_args = signature(node.func.func).bind(*args, **kwargs).arguments
-    res = be.builder.call(fn, ba_args.values())
+    scope = funcdef.bind_scope(args, kwargs)
+    res = be.builder.call(fn, scope.values())
     return res
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from collections import ChainMap
-from inspect import signature
 from functools import singledispatch
 from pprint import pformat
 
@@ -17,10 +16,8 @@ def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
 
 
 def _eval_funcdef(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Data:
-    sig = signature(funcdef.func)
-    ba = sig.bind(*args, **kwargs)
-    args = {an: ba.arguments[an.name] for an in funcdef.argnodes}
-    ctx = Context(scope=args, cache={})
+    scope = funcdef.bind_scope(args, kwargs)
+    ctx = Context(scope=scope, cache={})
     res = ctx.eval(funcdef.node)
     return res
 

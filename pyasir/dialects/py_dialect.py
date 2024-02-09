@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable
 from types import SimpleNamespace
 from dataclasses import dataclass
-from inspect import signature
-from pprint import pprint
 
 from pyasir.nodes import (
     RegionNode,
