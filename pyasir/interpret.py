@@ -104,6 +104,11 @@ def _eval_node_ExprNode(node: _df.ExprNode, ctx: Context):
 
 
 @eval_node.register
+def _eval_node_PackNode(node: _df.PackNode, ctx: Context):
+    return Data(tuple(map(ctx.eval, node.values)))
+
+
+@eval_node.register
 def _eval_node_UnpackNode(node: _df.UnpackNode, ctx: Context):
     values = ctx.eval(node.producer)
     return values.value[node.index]

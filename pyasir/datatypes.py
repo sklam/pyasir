@@ -52,6 +52,20 @@ class OpTrait:
         assert isinstance(self.result_type, DataType)
 
 
+
+def define_op(trait_type: Type[OpTrait]):
+    def wrap(fn):
+        def handler(*args, **kwargs):
+            from pyasir.nodes import ExprNode, as_node_args
+            from inspect import signature
+            ba = signature(fn).bind(*args, **kwargs)
+            assert not ba.kwargs
+            return ExprNode(trait_type.result_type, trait_type,
+                            args=as_node_args(tuple(ba.args)))
+        return handler
+    return wrap
+
+
 @dataclass(frozen=True)
 class MakeOp(OpTrait):
     ...

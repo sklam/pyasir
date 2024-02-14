@@ -16,5 +16,4 @@ def parse_file(the_file, the_module, the_func):
     result = build.build(files, options=opt)
     # Access the AST for a specific module
     module_graph = result.graph[the_module]
-    fn = module_graph.tree.names[the_func]
-    return fn
+    return module_graph

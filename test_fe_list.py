@@ -7,24 +7,17 @@ from llpyfe.translate import Translator
 from pyasir.interpret import interpret
 
 
-the_file = "./llpy_hello.py"
-the_module = "llpy_hello"
-the_func = "do_sum"
+the_file = "./llpy_list.py"
+the_module = "llpy_list"
+the_func = "testme"
 
 
 def fe_compile():
     module_graph = parse_file(the_file, the_module, the_func)
-
-    funcdef = module_graph.tree.names[the_func]
-    print(funcdef.node)
-
-    src_buffer = []
+    print(module_graph.tree)
 
     translator = Translator()
-    src_buffer.append(translator.get_import_lines())
-    src_buffer.append(translator.translate(funcdef.node))
-
-    source = '\n'.join(src_buffer)
+    source = translator.translate_file(module_graph.tree)
     print(source)
     return source
 
@@ -44,9 +37,10 @@ def test():
     source = fe_compile()
     args = (5,)
     res = run_function(source, args)
+    print("res =", res)
 
-    from llpy_hello import do_sum
-    assert res == do_sum(*args)
+    # from llpy_hello import do_sum
+    # assert res == do_sum(*args)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+import ctypes
+import operator
+from functools import cache
+from dataclasses import dataclass, make_dataclass
+from typing import Type, Callable
+from inspect import Signature, Parameter
+
+from llvmlite import ir
+
+from pyasir.typing import get_annotations
+from pyasir import datatypes as _dt
+from pyasir import nodes as _df
+import pyasir
+
+from pyasir.interpret import eval_op
+from pyasir.dispatchables.be_llvm import (
+    emit_llvm_type,
+    emit_llvm_const,
+    emit_llvm,
+)
+from pyasir.dispatchables.ctypes import emit_c_type
+from ..datatypes import OpTrait, define_op, TypeOpError
+from .integers import Int64
+from .io import IO
+
+
+
+
+@dataclass(frozen=True)
+class PointerBinop(OpTrait):
+    py_impl: Callable
+
+
+
+PTR_BINOPS = {
+    "==": lambda restype: PointerBinop(restype, operator.eq),
+    "!=": lambda restype: PointerBinop(restype, operator.ne),
+}
+
+
+class Pointer(_dt.DataType):
+
+    def get_binop(self, op: str, lhs: _dt.DataType, rhs: _dt.DataType) -> PointerBinop:
+        optrait = PTR_BINOPS[op](self)
+        if lhs != self or rhs == Int64:
+            raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
+        return optrait
+
+
+
+@dataclass(frozen=True)
+class PointerAlloc(OpTrait):
+    pass
+
+
+@define_op(PointerAlloc(Pointer()))
+def alloc(n: pyasir.Int64) -> Pointer:
+    pass
+
+
+@dataclass(frozen=True)
+class PointerFree(OpTrait):
+    pass
+
+
+@define_op(PointerFree(IO()))
+def free(p: Pointer) -> IO:
+    pass
+
+
+@dataclass(frozen=True)
+class PointerLoad(OpTrait):
+    pass
+
+@dataclass(frozen=True)
+class PointerStore(OpTrait):
+    item_type: _dt.DataType
+
+
+def load(dt: _dt.DataType, ptr: Pointer) :
+    dt = _dt.ensure_type(dt)
+    return _df.ExprNode(dt, PointerLoad(dt), args=(ptr,))
+
+def store(ptr: Pointer, item) -> IO:
+    return _df.ExprNode(IO(), PointerStore(IO(), item_type=item.datatype), args=(ptr, item))
+
+# -----------------------------------------------------------------------------
+
+@eval_op.register
+def eval_op_PointerAlloc(op: PointerAlloc, n):
+    cdll = ctypes.CDLL(None)
+    cdll.malloc.restype = ctypes.c_void_p
+    out = cdll.malloc(n)
+    assert out is not None
+    print("malloc", hex(out))
+    return out
+
+@eval_op.register
+def eval_op_PointerFree(op: PointerFree, p):
+    print("free", hex(p))
+    cdll = ctypes.CDLL(None)
+    free = cdll.free
+    free.argtypes = [ctypes.c_void_p]
+    free.restype = None
+    free(p)
+    return 0
+
+
+@eval_op.register
+def eval_op_PointerLoad(op: PointerLoad, ptr):
+    from pyasir.dispatchables.ctypes import emit_c_type
+
+    ct_result = emit_c_type(op.result_type)
+    castedptr = ctypes.cast(ptr, ctypes.POINTER(ct_result))
+    print("load", hex(ptr))
+    out = castedptr[0]
+    return out
+
+@eval_op.register
+def eval_op_PointerStore(op: PointerStore, ptr, item):
+    from pyasir.dispatchables.ctypes import emit_c_type
+
+    ct_item = emit_c_type(op.item_type)
+
+    castedptr = ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(ct_item))
+    print("store", hex(ptr))
+    castedptr[0] = item
+
+
+@emit_c_type.register
+def _(datatype: Pointer):
+    # Use c_size_t type to prevent conversion to None
+    return ctypes.c_size_t
+
+
+
+@eval_op.register
+def _(op: PointerBinop, lhs, rhs):
+    assert op.py_impl == operator.ne
+    # print("!=", lhs, rhs)
+    return op.py_impl(lhs, rhs)

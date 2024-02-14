@@ -36,7 +36,7 @@ class ValueNode(DFNode):
     def __post_init__(self):
         assert isinstance(self.datatype, _dt.DataType), type(self.datatype)
 
-    __add__ = partialmethod(_generic_binop, op="+")
+    __add__ = __radd__ = partialmethod(_generic_binop, op="+")
     __sub__ = partialmethod(_generic_binop, op="-")
     __mul__ = partialmethod(_generic_binop, op="*")
 
@@ -44,6 +44,9 @@ class ValueNode(DFNode):
     __ge__ = partialmethod(_generic_binop, op=">=")
     __gt__ = partialmethod(_generic_binop, op=">")
     __lt__ = partialmethod(_generic_binop, op="<")
+
+    __eq__ = partialmethod(_generic_binop, op="==")
+    __ne__ = partialmethod(_generic_binop, op="!=")
 
     def __getattr__(self, attr: str):
         attrop = self.datatype.attribute_lookup(attr)
@@ -117,7 +120,7 @@ class ArgBinder:
 
     def get_scope(self):
         argnodes = self.__argnodes
-        return {argnodes[k]: vn for k, vn in self.__valnodes.items()}
+        return Scope({argnodes[k]: vn for k, vn in self.__valnodes.items()})
 
     def get_argnodes(self):
         return self.__argnodes
@@ -141,6 +144,17 @@ class RegionNode(DFNode):
         res = region_func(**arguments)
         if not isgenerator(res):
             res = as_node(res)
+        return scope, res
+
+    def _call_region_loop(
+        self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]
+    ) -> tuple[Scope, ValueNode | Iterable[ValueNode]]:
+        ab = ArgBinder(region_func)
+        ab.bind_to_valuenodes(args, kwargs)
+        arguments = ab.get_argnodes()
+        scope = ab.get_scope()
+
+        res = region_func(**arguments)
         return scope, res
 
 
@@ -208,6 +222,7 @@ class SwitchNode(RegionNode):
 
     @classmethod
     def make(cls, pred, func=None):
+        pred = as_node(pred)
         if func is None:
             return partial(cls.make, pred)
         return cls(pred, func)
@@ -230,7 +245,7 @@ class SwitchNode(RegionNode):
         out = EnterNode.make(
             self,
             CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes)),
-            scope={},
+            scope=Scope({}),
         )
         return out
 
@@ -245,11 +260,13 @@ class LoopNode(RegionNode):
 
     def __call__(self, *args: Any, **kwargs: Any):
         [args, kwargs] = self._pre_call(args, kwargs)
-        scope, nodes = self._call_region(self.region_func, args, kwargs)
+        scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
         cont, values = nodes
         body_values = tuple([cont, *values])
+        for v in body_values:
+            assert isinstance(v, ValueNode)
 
-        loopbody = LoopBodyNode(pyasir.Packed(), body_values, scope)
+        loopbody = LoopBodyNode(pyasir.Packed.make(*[v.datatype for v in body_values]), body_values, scope)
         pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
         value_nodes = tuple(
             [
@@ -306,11 +323,42 @@ class UnpackNode(ValueNode):
     index: int
 
 
+@dataclass(frozen=True, order=False)
+class ExpandNode(ValueNode):
+    origin: ValueNode
+
+    @classmethod
+    def make(cls, node: ValueNode):
+        assert isinstance(node.datatype, pyasir.Packed)
+        return cls(node.datatype, origin=node)
+
+    def __iter__(self):
+        unpacked = [
+            UnpackNode(ty, self.origin, i)
+            for i, ty in enumerate(self.datatype.elements)
+        ]
+        return iter(unpacked)
+
+
+@dataclass(frozen=True, order=False)
+class PackNode(ValueNode):
+    values: tuple[ValueNode, ...]
+
+    @classmethod
+    def make(cls, *values: ValueNode):
+        values = as_node_args(values)
+        return cls(pyasir.Packed.make(*[v.datatype for v in values]),
+                   values=values)
+
+
+
 func = FuncNode.make
 switch = SwitchNode.make
 case = CaseNode.make
 loop = LoopNode.make
 
+pack = PackNode.make
+unpack = ExpandNode.make
 
 @dataclass(frozen=True)
 class LiteralNode(ValueNode):
@@ -340,11 +388,6 @@ def _(val: float):
 @as_node.register
 def _(val: bool):
     return LiteralNode(pyasir.Bool(), val)
-
-
-@as_node.register
-def _(val: tuple):
-    return tuple(map(as_node, val))
 
 
 def as_node_args(args) -> tuple[ValueNode, ...]:
@@ -404,6 +447,10 @@ class EnterNode(ValueNode):
     node: DFNode
     scope: Scope
 
+    def __post_init__(self):
+        assert isinstance(self.scope, Scope)
+
+
     @classmethod
     def make(cls, region, node, scope):
         _sentry_scope(scope)
@@ -419,7 +466,7 @@ class EnterNode(ValueNode):
             ]
             return iter(unpacked)
         else:
-            return NotImplemented
+            raise NotImplementedError(self)
 
     def __hash__(self):
         return id(self)
@@ -440,7 +487,7 @@ def cast(value: ValueNode, to_type: _dt.DataType) -> DFNode:
 
 def make(__dt: _dt.DataType, *args, **kwargs) -> DFNode:
     dt = _dt.ensure_type(__dt)
-    args = dt.get_make(args, kwargs)
+    args = dt.get_make(as_node_args(args), as_node_kwargs(kwargs))
     return ExprNode(dt, _dt.MakeOp(dt), args=tuple(args.values()))
 
 

@@ -36,16 +36,16 @@ def fac_ir(n: pyasir.Int64) -> pyasir.Int64:
                 return n > 1, (n, y)
 
             n, y = loop(n, y)
-            return y
+            return df.pack(y)
 
         @df.case(0)
         def dont(n, y):
-            return y
+            return df.pack(y)
 
         yield do_loop
         yield dont
 
-    y = swt(n, y)
+    [y] = df.unpack(swt(n, y))
     return y
 
 

@@ -17,6 +17,7 @@ from pyasir.dispatchables.be_llvm import (
     emit_llvm_const,
     emit_llvm,
 )
+from pyasir.dispatchables.ctypes import emit_c_type
 
 
 def Struct(cls: Type) -> StructType:
@@ -45,16 +46,16 @@ class StructType(_dt.DataType):
                 return _dt.AttrOp(t, self, attr, i)
         raise AttributeError(attr)
 
-    def _make_dataclass(self):
-        fields = self.__struct_annotations__
-        return make_dataclass(self.__class__.__name__, fields, frozen=True)
+    def get_fields(self) -> tuple[tuple[str, _dt.DataType], ...]:
+        return self.__struct_annotations__
 
 
 @eval_op.register
 def _(op: _dt.MakeOp, *args):
     assert isinstance(op.result_type, StructType)
-    dc = op.result_type._make_dataclass()
-    return dc(*args)
+    cstruct = emit_c_type(op.result_type)
+    # TODO: Make sure this is read-only
+    return cstruct(*args)
 
 
 @eval_op.register
@@ -79,3 +80,24 @@ def _(op: _dt.MakeOp, builder: ir.IRBuilder, *args: ir.Value):
 @emit_llvm.register
 def _(op: _dt.AttrOp, builder: ir.IRBuilder, st: ir.Value):
     return builder.extract_value(st, op.index)
+
+
+
+
+
+@emit_c_type.register
+def _struct_ctype(datatype: StructType):
+    import ctypes
+
+    if datatype in _struct_ctype.cache:
+        return _struct_ctype.cache[datatype]
+
+    fields = [(k, emit_c_type(t)) for k, t in datatype.get_fields()]
+    class c_struct(ctypes.Structure):
+        _fields_ = fields
+
+    _struct_ctype.cache[datatype] = c_struct
+    return c_struct
+
+
+_struct_ctype.cache = {}

@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 
 
-_REGEX_AST_TEMPLATE = re.compile(r"\$[a-zA-Z_0-9]+")
+_REGEX_AST_TEMPLATE = re.compile(r"( *)(\$[a-zA-Z_0-9]+)")
 
 
 @dataclass(frozen=True)
@@ -38,21 +38,24 @@ def ast_parse_eval(text: str) -> _ASTLike:
 
 
 def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> _ASTLike:
-    def match(m: str):
-        out = repl[m.group(0)]
+    def match(m):
+        spaces: str = m.group(1)
+        key: str = m.group(2)
+        out = repl[key]
+
         if isinstance(out, ast.AST):
-            return ast.unparse(out)
+            return spaces + ast.unparse(out)
         elif isinstance(out, IndentedBlock):
-            INDENT = " " * 4
             return textwrap.indent(
-                "\n".join(map(ast.unparse, out.statements)), INDENT
-            ).lstrip()
+                "\n".join(map(ast.unparse, out.statements)), spaces
+            )
         else:
             assert isinstance(out, str), type(out)
-            return out
+            return spaces + out
 
     replaced = _REGEX_AST_TEMPLATE.sub(match, source)
-    tree = ast.parse(replaced.replace("$", ""))
+    source = replaced.replace("$", "")
+    tree = ast.parse(source)
 
     if isinstance(tree, ast.Module):
         if len(tree.body) == 1:
@@ -64,6 +67,68 @@ def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> _ASTLike:
 
 
 class Translator:
+
+    def translate_file(self, tree: _mypy.MypyFile) -> str:
+        buf: list[str] = []
+        buf.append(self.get_import_lines())
+        for defn in tree.defs:
+            if isinstance(defn, (_mypy.Decorator, _mypy.FuncDef)):
+                buf.append(self.translate(defn))
+            elif isinstance(defn, (_mypy.ImportFrom, _mypy.Import)):
+                buf.append(self.translate_import(defn))
+            elif isinstance(defn, _mypy.ClassDef):
+                buf.append(self.translate_classdef(defn))
+            else:
+                raise NotImplementedError(type(defn), defn)
+        return '\n'.join(buf)
+
+    def translate_classdef(self, tree: _mypy.ClassDef) -> str:
+        out: list[str] = []
+
+        [decor] = tree.decorators
+        assert decor.node.fullname == "llpyfe.struct"
+        assert not tree.base_type_exprs
+        assert not tree.metaclass
+        fields: str = []
+        for dfn in tree.defs.body:
+            assert isinstance(dfn, _mypy.AssignmentStmt)
+            assert isinstance(dfn.rvalue, _mypy.TempNode)
+            [lval] = dfn.lvalues
+            name = lval.name
+            ty = load_pyasir_type(str(dfn.type))
+            fields.append(f"    {name}: {ty}")
+
+        repl = {
+            "$name": tree.name,
+            "$fields": IndentedBlock(fields)
+        }
+        out.append(f"@pyasir.Struct")
+        out.append(f"class {tree.name}:")
+        out.extend(fields)
+        return '\n'.join(out)
+
+    def translate_import(self, tree: _mypy.ImportFrom | _mypy.Import) -> str:
+        out: list[str] = []
+        if isinstance(tree, _mypy.ImportFrom):
+            basepath = str(tree.id)
+            for target, alias in tree.names:
+                alias = alias or target
+                out.append(f"from {basepath} import {target} as {alias}")
+        elif isinstance(tree, _mypy.Import):
+            for target, alias in tree.ids:
+                if alias:
+                    out.append(f"import {target} as {alias}")
+                else:
+                    out.append(f"import {target}")
+
+        else:
+            raise NotImplementedError(type(tree), tree)
+
+        # write import lines
+
+        return '\n'.join(out)
+
+
     def translate(self, fndef: _mypy.FuncDef) -> str:
         tree = mypy_to_ast(fndef)
         print("ast.dump".center(80, "-"))
@@ -157,6 +222,26 @@ def $name($args) -> $retty:
 
 
 @_mypy_to_ast.register
+def _(tree: _mypy.Decorator) -> _ASTLike:
+    [decor] = tree.decorators
+    if decor.node.fullname == "llpyfe.aot":
+        repl = {
+            "$decor": "",
+            "$func": mypy_to_ast(tree.func),
+        }
+    else:
+        repl = {
+            "$decor": "@" + mypy_to_ast(decor),
+            "$func": mypy_to_ast(tree.func),
+        }
+    return ast_template(
+        """$decor\n$func
+""",
+        repl
+    )
+
+
+@_mypy_to_ast.register
 def _(tree: _mypy.Block) -> _ASTLike:
     ast_stmt_list = [mypy_to_ast(stmt) for stmt in tree.body]
 
@@ -241,16 +326,16 @@ def switch($args):
     @__pir__.case(1)
     def ifblk($args):
         $body
-        return $args
+        return __pir__.pack($args)
 
     @__pir__.case(0)
     def elseblk($args):
-        return $args
+        return __pir__.pack($args)
 
     yield ifblk
     yield elseblk
 
-$args = switch($args)
+[$args] = __pir__.unpack(switch($args))
         """,
         repl
 
@@ -282,26 +367,42 @@ def swt_while($args) :
         def loop($args):
             $body
             return $pred, ($args,)
-        ($args,) = loop($args)
-        return $args
+        [$args] = loop($args)
+        return __pir__.pack($args)
 
     @__pir__.case(0)
     def case0($args):
-        return $args
+        return __pir__.pack($args)
 
     yield case1
     yield case0
 
-$args = swt_while($args)
+[$args] = __pir__.unpack(swt_while($args))
         """,
         repl
 
     )
 
+@_mypy_to_ast.register
+def _(tree: _mypy.AssignmentExpr) -> _ASTLike:
+    lhs = ast.Name(id=str(tree.target.name), ctx=ast.Store())
+    rhs = mypy_to_ast(tree.value)
+    return ast.NamedExpr(target=lhs, value=rhs)
+
 
 @_mypy_to_ast.register
 def _(tree: _mypy.ExpressionStmt) -> _ASTLike:
     return mypy_to_ast(tree.expr)
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.OpExpr) -> _ASTLike:
+    op = tree.op
+    assert op == "+"
+
+    return ast_template(
+        f"$left {op} $right", {"$left": mypy_to_ast(tree.left),
+                               "$right": mypy_to_ast(tree.right)})
 
 
 @_mypy_to_ast.register
@@ -337,10 +438,18 @@ def _(tree: _mypy.CallExpr) -> _ASTLike:
     return ast_template(
         f"$callee($args)",
         {
-            "$callee": callee.name,
+            "$callee": mypy_to_ast(callee),
             "$args": argbuf,
         },
     )
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.MemberExpr) -> _ASTLike:
+    repl = {
+        "$base": mypy_to_ast(tree.expr),
+    }
+    return ast_template(f"$base.{tree.name}", repl)
 
 
 @_mypy_to_ast.register
