@@ -195,7 +195,7 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
         swt.add_case(case_val, bb)
 
     be.builder.position_at_end(bb_after)
-    phi = be.builder.phi(inttype)
+    phi = be.builder.phi(case_outs.type)
     for bb, case_outs in bb_case_outs.items():
         phi.add_incoming(case_outs, bb)
     return phi
@@ -224,6 +224,17 @@ def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
 def _emit_node_LiteralNode(node: _df.LiteralNode, be: LLVMBackend):
     val = node.py_value
     return emit_llvm_const(node.datatype, be.builder, val)
+
+
+@emit_node.register
+def _eval_node_PackNode(node: _df.PackNode, be: LLVMBackend):
+    values = [be.emit(v) for v in node.values]
+    struct = ir.Constant(
+        ir.LiteralStructType([v.type for v in values]), None
+    )
+    for i, v in enumerate(values):
+        struct = be.builder.insert_value(struct, v, i)
+    return struct
 
 
 @emit_node.register(_df.UnpackNode)
