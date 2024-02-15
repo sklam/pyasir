@@ -24,6 +24,11 @@ class SyncOp(OpTrait):
     ...
 
 
+@dataclass(frozen=True)
+class StateOp(OpTrait):
+    ...
+
+
 def sync(io, *args) -> _df.DFNode:
     io, *args = _df.as_node_args((io, *args))
     states = [io, *args[:-1]]
@@ -34,8 +39,24 @@ def sync(io, *args) -> _df.DFNode:
     return _df.ExprNode(dt, SyncOp(dt), args=(*states, value))
 
 
+
+
+def seq() -> _df.DFNode:
+    return _df.ExprNode(IO(), StateOp(IO()), args=())
+
+
+
 @eval_op.register
 def _(op: SyncOp, *args):
     return args[-1]
 
+
+
+class DummyState:
+    pass
+
+
+@eval_op.register
+def _(op: StateOp, *args):
+    return DummyState()
 
