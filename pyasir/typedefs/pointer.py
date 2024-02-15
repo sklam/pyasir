@@ -23,6 +23,7 @@ from pyasir.dispatchables.be_llvm import (
 from pyasir.dispatchables.ctypes import emit_c_type
 from ..datatypes import OpTrait, define_op, TypeOpError
 from .integers import Int64
+from .integers import Bool
 from .io import IO
 
 
@@ -43,7 +44,7 @@ PTR_BINOPS = {
 class Pointer(_dt.DataType):
 
     def get_binop(self, op: str, lhs: _dt.DataType, rhs: _dt.DataType) -> PointerBinop:
-        optrait = PTR_BINOPS[op](self)
+        optrait = PTR_BINOPS[op](Bool())
         if lhs != self or rhs == Int64:
             raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         return optrait

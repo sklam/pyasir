@@ -1,4 +1,5 @@
 from __future__ import annotations
+from _ast import AST
 
 import importlib
 import mypy.nodes as _mypy
@@ -11,58 +12,107 @@ from functools import singledispatch
 from typing import NamedTuple
 
 
-
 _REGEX_AST_TEMPLATE = re.compile(r"( *)(\$[a-zA-Z_0-9]+)")
 
 
+
 @dataclass(frozen=True)
-class IndentedBlock:
-    statements: list[ast.AST]
+class SourceGen:
+    def generate_source(self) -> str:
+        return ast.unparse(self.generate_ast())
+
+    def generate_ast(self) -> ast.AST:
+        raise NotImplementedError(type(self))
+
+
+@dataclass(frozen=True)
+class SourceBlock(SourceGen):
+    statements: list[SourceGen]
 
     def __post_init__(self):
         copied = self.statements.copy()
         self.statements.clear()
         for stmt in copied:
-            if isinstance(stmt, IndentedBlock):
+            if isinstance(stmt, SourceBlock):
                 self.statements.extend(stmt.statements)
-            else:
+            elif isinstance(stmt, SourceGen):
                 self.statements.append(stmt)
+            else:
+                assert not isinstance(stmt, ast.AST)
+        assert self.statements
+
+    def generate_ast(self) -> ast.AST:
+        body = [stmt.generate_ast() for stmt in self.statements]
+        return ast.Module(body=body, type_ignores=())
 
 
-_ASTLike = IndentedBlock | ast.AST
-_TemplateReplVal = str | IndentedBlock | ast.AST
+@dataclass(frozen=True)
+class ASTWrapper(SourceGen):
+    astree: ast.AST
+
+    def __post_init__(self):
+        assert isinstance(self.astree, ast.AST)
+
+    def _generate_source_details(self) -> str:
+        return ast.unparse(self.astree)
+
+    @staticmethod
+    def from_source(source: str) -> ASTWrapper:
+        try:
+            tree = ast.parse(source)
+        except Exception:
+            breakpoint()
+            raise
+        return ASTWrapper(tree)
+
+    def generate_ast(self) -> ast.AST:
+        return self.astree
 
 
-def ast_parse_eval(text: str) -> _ASTLike:
-    return ast.parse(text, mode="eval")
+def normalize_ast_module(tree: ast.AST) -> ast.expr:
+    if isinstance(tree, ast.Module):
+        if len(tree.body) == 1:
+            [tree] = tree.body
+        else:
+            raise ValueError(type(tree))
+    if isinstance(tree, ast.Expr):
+        tree = tree.value
+    elif isinstance(tree, ast.Expression):
+        tree = tree.body
+    assert isinstance(tree, ast.expr), ast.dump(tree)
+    return tree
 
 
-def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> _ASTLike:
+
+_TemplateReplVal = str | SourceBlock | ast.AST
+
+
+def ast_parse_eval(text: str) -> SourceGen:
+    return ASTWrapper(ast.parse(text, mode="eval"))
+
+
+def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> SourceGen:
     def match(m):
         spaces: str = m.group(1)
         key: str = m.group(2)
         out = repl[key]
 
-        if isinstance(out, ast.AST):
-            return spaces + ast.unparse(out)
-        elif isinstance(out, IndentedBlock):
-            return textwrap.indent(
-                "\n".join(map(ast.unparse, out.statements)), spaces
-            )
+        if isinstance(out, SourceGen):
+            out = out.generate_source()
         else:
-            assert isinstance(out, str), type(out)
-            return spaces + out
+            assert isinstance(out, str)
+        return textwrap.indent(out, prefix=spaces)
 
     replaced = _REGEX_AST_TEMPLATE.sub(match, source)
     source = replaced.replace("$", "")
-    tree = ast.parse(source)
+    tree = ASTWrapper.from_source(source)
 
     if isinstance(tree, ast.Module):
         if len(tree.body) == 1:
             [stmt] = tree.body
-            return stmt
+            return ASTWrapper(stmt)
         else:
-            return IndentedBlock(tree.body)
+            return SourceBlock(tree.body)
     return tree
 
 
@@ -98,10 +148,6 @@ class Translator:
             ty = load_pyasir_type(str(dfn.type))
             fields.append(f"    {name}: {ty}")
 
-        repl = {
-            "$name": tree.name,
-            "$fields": IndentedBlock(fields)
-        }
         out.append(f"@pyasir.Struct")
         out.append(f"class {tree.name}:")
         out.extend(fields)
@@ -130,7 +176,7 @@ class Translator:
 
 
     def translate(self, fndef: _mypy.FuncDef) -> str:
-        tree = mypy_to_ast(fndef)
+        tree = mypy_to_ast(fndef).generate_ast()
         print("ast.dump".center(80, "-"))
         print(ast.dump(tree, indent=4))
         print("=" * 80)
@@ -147,10 +193,9 @@ from pyasir import nodes as __pir__
 """
 
 
-def mypy_to_ast(tree: _mypy.Node) -> _ASTLike:
+def mypy_to_ast(tree: _mypy.Node) -> SourceGen:
     out = _mypy_to_ast(tree)
-    assert isinstance(out, (IndentedBlock, ast.AST))
-    assert not isinstance(out, ast.Module), f"---- {type(tree)}"
+    assert isinstance(out, SourceGen), f"{type(tree)} didn't return SourceGen"
     return out
 
 
@@ -168,12 +213,21 @@ class FindLoadedNames(ast.NodeVisitor):
         if isinstance(node.ctx, ast.Store):
             self.__modified_vars.add(node.id)
 
+    def handle(self, srcgen: SourceGen):
+        if isinstance(srcgen, SourceBlock):
+            for stmt in srcgen.statements:
+                self.handle(stmt)
+        elif isinstance(srcgen, ASTWrapper):
+            self.visit(srcgen.astree)
+        else:
+            raise TypeError(type(srcgen))
 
 
-def find_loaded_names(block: list[ast.stmt]) -> frozenset[str]:
+
+def find_loaded_names(block: list[SourceGen]) -> frozenset[str]:
     finder = FindLoadedNames()
     for b in block:
-        finder.visit(b)
+        finder.handle(b)
     return finder.get()
 
 
@@ -186,12 +240,12 @@ def load_pyasir_type(tyname: str):
 
 
 @singledispatch
-def _mypy_to_ast(tree: _mypy.Node) -> _ASTLike:
+def _mypy_to_ast(tree: _mypy.Node) -> SourceGen:
     raise NotImplementedError(tree)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.FuncDef) -> _ASTLike:
+def _(tree: _mypy.FuncDef) -> SourceGen:
     arg_pos = get_funcdef_args(tree)
 
     calltype: _mypyt.CallableType = tree.type
@@ -222,7 +276,7 @@ def $name($args) -> $retty:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.Decorator) -> _ASTLike:
+def _(tree: _mypy.Decorator) -> SourceGen:
     [decor] = tree.decorators
     if decor.node.fullname == "llpyfe.aot":
         repl = {
@@ -242,20 +296,21 @@ def _(tree: _mypy.Decorator) -> _ASTLike:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.Block) -> _ASTLike:
+def _(tree: _mypy.Block) -> SourceGen:
     ast_stmt_list = [mypy_to_ast(stmt) for stmt in tree.body]
 
 
-    return IndentedBlock(ast_stmt_list)
+    return SourceBlock(ast_stmt_list)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.AssignmentStmt) -> _ASTLike:
+def _(tree: _mypy.AssignmentStmt) -> SourceGen:
     [lhs] = tree.lvalues
     rhs = tree.rvalue
     tree = ast_template(
         f"$lhs = $rhs",
-        {"$lhs": lhs.name, "$rhs": mypy_to_ast(rhs)},
+        {"$lhs": lhs.name,
+         "$rhs": mypy_to_ast(rhs)},
     )
     return tree
 
@@ -267,7 +322,7 @@ def prepare_iterator_call(iter_expr: _mypy.CallExpr) -> tuple[ast.AST, list[ast.
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ForStmt) -> _ASTLike:
+def _(tree: _mypy.ForStmt) -> SourceGen:
     index = tree.index
     index_name = index.name
     iter_expr = tree.expr
@@ -306,7 +361,7 @@ $args = loop($loopargs)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.IfStmt) -> _ASTLike:
+def _(tree: _mypy.IfStmt) -> SourceGen:
     [pred_tree] = tree.expr
     [body_tree] = tree.body
     pred_expr = mypy_to_ast(pred_tree)
@@ -344,7 +399,7 @@ def switch($args):
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.WhileStmt) -> _ASTLike:
+def _(tree: _mypy.WhileStmt) -> SourceGen:
     pred_tree = tree.expr
     body_tree = tree.body
     pred_expr = mypy_to_ast(pred_tree)
@@ -357,7 +412,7 @@ def _(tree: _mypy.WhileStmt) -> _ASTLike:
         "$pred": pred_expr,
         "$body": body_block,
     }
-
+    assert modified_names, breakpoint()
     return ast_template("""
 @__pir__.switch($pred)
 def swt_while($args) :
@@ -384,19 +439,20 @@ def swt_while($args) :
     )
 
 @_mypy_to_ast.register
-def _(tree: _mypy.AssignmentExpr) -> _ASTLike:
+def _(tree: _mypy.AssignmentExpr) -> SourceGen:
     lhs = ast.Name(id=str(tree.target.name), ctx=ast.Store())
-    rhs = mypy_to_ast(tree.value)
-    return ast.NamedExpr(target=lhs, value=rhs)
+    rhs = mypy_to_ast(tree.value).generate_ast()
+    rhs = normalize_ast_module(rhs)
+    return ASTWrapper(ast.NamedExpr(target=lhs, value=rhs))
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ExpressionStmt) -> _ASTLike:
+def _(tree: _mypy.ExpressionStmt) -> SourceGen:
     return mypy_to_ast(tree.expr)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.OpExpr) -> _ASTLike:
+def _(tree: _mypy.OpExpr) -> SourceGen:
     op = tree.op
     assert op == "+"
 
@@ -406,7 +462,7 @@ def _(tree: _mypy.OpExpr) -> _ASTLike:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ComparisonExpr) -> _ASTLike:
+def _(tree: _mypy.ComparisonExpr) -> SourceGen:
     [opstr] = tree.operators
     [lhs, rhs] = map(mypy_to_ast, tree.operands)
     repl = {
@@ -420,7 +476,7 @@ def _(tree: _mypy.ComparisonExpr) -> _ASTLike:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.OperatorAssignmentStmt) -> _ASTLike:
+def _(tree: _mypy.OperatorAssignmentStmt) -> SourceGen:
     opstr = tree.op + "="
     return ast_template(
         f"$lhs {opstr} $rhs",
@@ -432,9 +488,9 @@ def _(tree: _mypy.OperatorAssignmentStmt) -> _ASTLike:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.CallExpr) -> _ASTLike:
+def _(tree: _mypy.CallExpr) -> SourceGen:
     callee: _mypy.NameExpr = tree.callee
-    argbuf = ", ".join([ast.unparse(mypy_to_ast(arg)) for arg in tree.args])
+    argbuf = ", ".join([mypy_to_ast(arg).generate_source() for arg in tree.args])
     return ast_template(
         f"$callee($args)",
         {
@@ -445,7 +501,7 @@ def _(tree: _mypy.CallExpr) -> _ASTLike:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.MemberExpr) -> _ASTLike:
+def _(tree: _mypy.MemberExpr) -> SourceGen:
     repl = {
         "$base": mypy_to_ast(tree.expr),
     }
@@ -453,23 +509,23 @@ def _(tree: _mypy.MemberExpr) -> _ASTLike:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ReturnStmt) -> _ASTLike:
+def _(tree: _mypy.ReturnStmt) -> SourceGen:
     repl = {"$value": mypy_to_ast(tree.expr)}
     return ast_template(f"return $value", repl)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.NameExpr) -> _ASTLike:
+def _(tree: _mypy.NameExpr) -> SourceGen:
     return ast_parse_eval(tree.name)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.StrExpr) -> _ASTLike:
+def _(tree: _mypy.StrExpr) -> SourceGen:
     return ast_parse_eval(f"{tree.value!r}")
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.IntExpr) -> _ASTLike:
+def _(tree: _mypy.IntExpr) -> SourceGen:
     return ast_parse_eval(f"{tree.value}")
 
 

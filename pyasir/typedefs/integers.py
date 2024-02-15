@@ -11,6 +11,7 @@ from ..dispatchables.be_llvm import emit_llvm_type, emit_llvm_const, emit_llvm
 from ..dispatchables.ctypes import emit_c_type
 from ..interpret import eval_op
 from ..datatypes import TypeOpError, DataType, OpTrait
+from .boolean import Bool
 
 
 @dataclass(frozen=True)
@@ -19,21 +20,26 @@ class IntBinop(OpTrait):
 
 
 INT_BINOPS = {
-    "<=": lambda restype: IntBinop(restype, operator.le),
-    ">=": lambda restype: IntBinop(restype, operator.ge),
-    ">": lambda restype: IntBinop(restype, operator.gt),
-    "<": lambda restype: IntBinop(restype, operator.lt),
     "+": lambda restype: IntBinop(restype, operator.add),
     "-": lambda restype: IntBinop(restype, operator.sub),
     "*": lambda restype: IntBinop(restype, operator.mul),
 }
 
+CMPOPS = {
+    "<=": lambda restype: IntBinop(restype, operator.le),
+    ">=": lambda restype: IntBinop(restype, operator.ge),
+    ">": lambda restype: IntBinop(restype, operator.gt),
+    "<": lambda restype: IntBinop(restype, operator.lt),
+}
 
 class IntegerType(DataType):
     bitwidth: int
 
     def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> IntBinop:
-        optrait = INT_BINOPS[op](self)
+        if op in CMPOPS:
+            optrait = CMPOPS[op](Bool())
+        else:
+            optrait = INT_BINOPS[op](self)
         if lhs != self or rhs != self:
             raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         return optrait
