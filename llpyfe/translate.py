@@ -1,6 +1,5 @@
 from __future__ import annotations
-from _ast import AST
-
+import copy
 import importlib
 import mypy.nodes as _mypy
 import mypy.types as _mypyt
@@ -9,10 +8,20 @@ import re
 import ast
 from dataclasses import dataclass
 from functools import singledispatch
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 
 _REGEX_AST_TEMPLATE = re.compile(r"( *)(\$[a-zA-Z_0-9]+)")
+
+
+
+def auto_format_source(code: str) -> str:
+    try:
+        import black
+    except ImportError:
+        return code
+    else:
+        return black.format_str(code, mode=black.FileMode())
 
 
 
@@ -42,8 +51,8 @@ class SourceBlock(SourceGen):
         assert self.statements
 
     def generate_ast(self) -> ast.AST:
-        body = [stmt.generate_ast() for stmt in self.statements]
-        return ast.Module(body=body, type_ignores=())
+        nodes = [stmt.generate_ast() for stmt in self.statements]
+        return ast.Module(body=nodes, type_ignores=())
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,7 @@ class ASTWrapper(SourceGen):
         try:
             tree = ast.parse(source)
         except Exception:
+            print(source)
             breakpoint()
             raise
         return ASTWrapper(tree)
@@ -84,7 +94,7 @@ def normalize_ast_module(tree: ast.AST) -> ast.expr:
 
 
 
-_TemplateReplVal = str | SourceBlock | ast.AST
+_TemplateReplVal = str | SourceBlock
 
 
 def ast_parse_eval(text: str) -> SourceGen:
@@ -171,20 +181,19 @@ class Translator:
             raise NotImplementedError(type(tree), tree)
 
         # write import lines
-
         return '\n'.join(out)
 
 
     def translate(self, fndef: _mypy.FuncDef) -> str:
-        tree = mypy_to_ast(fndef).generate_ast()
-        print("ast.dump".center(80, "-"))
-        print(ast.dump(tree, indent=4))
+        tree = PostProcessSeq().visit(mypy_to_ast(fndef).generate_ast())
+        # print("ast.dump".center(80, "-"))
+        # print(ast.dump(tree, indent=4))
         print("=" * 80)
         source = ast.unparse(tree)
         print("source".center(80, "-"))
         print(source)
         print("=" * 80)
-        return source
+        return auto_format_source(source)
 
     def get_import_lines(self) -> str:
         return """
@@ -193,11 +202,119 @@ from pyasir import nodes as __pir__
 """
 
 
+class PostProcessSeq(ast.NodeTransformer):
+    def_level = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.def_level += 1
+        body = _post_proc_body(node.body)
+        out = copy.copy(node)
+        out.body = [self.visit(n) for n in body]
+        if self.def_level == 1:
+            # is top level
+            stmt = _assign_to_seq(ast.parse("io.seq()", mode='eval').body)
+            out.body.insert(0, stmt)
+        # print("<<<<")
+        # print(ast.unparse(node))
+        # print('------')
+        # print(ast.dump(out))
+        # print(ast.unparse(out))
+        # print("<>>>>")
+        self.def_level -= 1
+        return out
+
+    def visit_Return(self, node: ast.Return) -> ast.Return:
+        if self.def_level == 1:
+            # is top level
+            seq = _make_load_seq()
+            ret = copy.copy(node)
+            ret.value = _wrap_io_seq([seq, node.value])
+            return ret
+        return node
+
+
+def _post_proc_body(nodes):
+    assert isinstance(nodes, list)
+    wr = BlockSyncWriter()
+
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            wr.append_assign(node)
+        elif isinstance(node, ast.Expr):
+            if isinstance(node.value, ast.Yield):
+                wr.append_other(node)
+            else:
+                wr.append_expr(node)
+        elif isinstance(node, (ast.FunctionDef, ast.Return)):
+            wr.append_other(node)
+        else:
+            raise TypeError(type(node), ast.unparse(node))
+
+    body = wr.write_body()
+    return body
+
+
+
+
 def mypy_to_ast(tree: _mypy.Node) -> SourceGen:
     out = _mypy_to_ast(tree)
     assert isinstance(out, SourceGen), f"{type(tree)} didn't return SourceGen"
     return out
 
+
+def _make_load_seq() -> ast.AST:
+    return ast.Name(id="__pir_seq__", ctx=ast.Load())
+
+
+def _wrap_io_seq(args) -> ast.AST:
+    # XXX: fix namespace
+    callee = ast.parse("io.sync", mode='eval').body
+    callnode = ast.Call(callee, args=args, keywords=[])
+    return ast.fix_missing_locations(callnode)
+
+
+def _assign_to_seq(sync_node: ast.Call) -> ast.AST:
+    callnode = ast.Assign(
+        targets=[ast.Name(id='__pir_seq__', ctx=ast.Store())],
+        value=sync_node,
+    )
+    return ast.fix_missing_locations(callnode)
+
+
+class BlockSyncWriter:
+    _exprs: list[ast.expr]
+    _body: list[ast.AST]
+
+    def __init__(self):
+        self._exprs = []
+        self._body = []
+
+    def append_assign(self, node: ast.Assign):
+        [target] = node.targets
+        if isinstance(target, ast.List):
+            self.flush()
+            self._body.append(node)
+        else:
+            node = ast.NamedExpr(target=target, value=node.value)
+            self._exprs.append(node)
+
+    def append_expr(self, expr: ast.expr):
+        self._exprs.append(expr)
+
+    def append_other(self, node: ast.AST):
+        self.flush()
+        self._body.append(node)
+
+    def flush(self):
+        if self._exprs:
+            name_seq = _make_load_seq()
+            args = [*self._exprs, name_seq]
+            self._exprs.clear()
+            self._body.append(_assign_to_seq(_wrap_io_seq(args)))
+
+    def write_body(self) -> list[ast.AST]:
+        self.flush()
+        return self._body
 
 
 
@@ -329,7 +446,7 @@ def _(tree: _mypy.ForStmt) -> SourceGen:
     assert not tree.else_body
     body_block = mypy_to_ast(tree.body)
 
-    modified_names = find_loaded_names(body_block.statements)
+    modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
     names = {index_name, *modified_names}
     names.remove(index_name)
     more = tuple(names)
@@ -368,7 +485,7 @@ def _(tree: _mypy.IfStmt) -> SourceGen:
     body_block = mypy_to_ast(body_tree)
     assert tree.else_body is None
 
-    modified_names = find_loaded_names(body_block.statements)
+    modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
     repl = {
         "$args": ', '.join(modified_names),
         "$pred": pred_expr,
@@ -406,7 +523,7 @@ def _(tree: _mypy.WhileStmt) -> SourceGen:
     body_block = mypy_to_ast(body_tree)
     assert tree.else_body is None
 
-    modified_names = find_loaded_names(body_block.statements)
+    modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
     repl = {
         "$args": ', '.join(modified_names),
         "$pred": pred_expr,
@@ -433,6 +550,7 @@ def swt_while($args) :
     yield case0
 
 [$args] = __pir__.unpack(swt_while($args))
+__pir_seq__ = io.sync($args, __pir_seq__)
         """,
         repl
 
