@@ -66,11 +66,7 @@ def _(op: _dt.AttrOp, value):
 @emit_llvm.register
 def _(op: _dt.MakeOp, builder: ir.IRBuilder, *args: ir.Value):
     assert isinstance(op.result_type, StructType)
-    elems = [
-        emit_llvm_type(t, builder.module)
-        for _k, t in op.result_type.__struct_annotations__
-    ]
-    llty = ir.LiteralStructType(elems)
+    llty = emit_llvm_type(op.result_type, builder.module)
     st = llty(None)
     for i, v in enumerate(args):
         st = builder.insert_value(st, v, i)
@@ -82,7 +78,10 @@ def _(op: _dt.AttrOp, builder: ir.IRBuilder, st: ir.Value):
     return builder.extract_value(st, op.index)
 
 
-
+@emit_llvm_type.register
+def _(datatype: StructType, module: ir.Module):
+    fields = [emit_llvm_type(t, module) for k, t in datatype.get_fields()]
+    return ir.LiteralStructType(fields)
 
 
 @emit_c_type.register

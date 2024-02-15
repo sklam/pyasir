@@ -60,3 +60,14 @@ class DummyState:
 def _(op: StateOp, *args):
     return DummyState()
 
+
+# -----------------------------------------------------------------------------
+
+
+@emit_llvm.register
+def _(op: StateOp, builder: ir.IRBuilder):
+    return ir.Constant(ir.IntType(32), 0)
+
+@emit_llvm.register
+def _(op: SyncOp, builder: ir.IRBuilder, *args: ir.Value):
+    return args[-1]

@@ -45,7 +45,7 @@ class Pointer(_dt.DataType):
 
     def get_binop(self, op: str, lhs: _dt.DataType, rhs: _dt.DataType) -> PointerBinop:
         optrait = PTR_BINOPS[op](Bool())
-        if lhs != self or rhs == Int64:
+        if lhs != self or rhs != self:
             raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         return optrait
 
@@ -63,6 +63,11 @@ def alloc(n: pyasir.Int64) -> Pointer:
 
 @dataclass(frozen=True)
 class PointerFree(OpTrait):
+    pass
+
+
+@dataclass(frozen=True)
+class IntToPtr(OpTrait):
     pass
 
 
@@ -87,6 +92,11 @@ def load(dt: _dt.DataType, ptr: Pointer) :
 def store(ptr: Pointer, item) -> IO:
     return _df.ExprNode(IO(), PointerStore(IO(), item_type=item.datatype), args=(ptr, item))
 
+
+def as_pointer(ptr: Pointer) -> _df.ValueNode:
+    return _df.ExprNode(Pointer(), IntToPtr(Pointer()), args=(_df.as_node(ptr),))
+
+
 # -----------------------------------------------------------------------------
 
 @eval_op.register
@@ -107,6 +117,10 @@ def eval_op_PointerFree(op: PointerFree, p):
     free.restype = None
     free(p)
     return 0
+
+@eval_op.register
+def eval_op_IntToPtr(op: IntToPtr, p):
+    return p
 
 
 @eval_op.register
@@ -142,3 +156,63 @@ def _(op: PointerBinop, lhs, rhs):
     assert op.py_impl == operator.ne
     # print("!=", lhs, rhs)
     return op.py_impl(lhs, rhs)
+
+
+# -----------------------------------------------------------------------------
+
+@emit_llvm_type.register
+def _(datatype: Pointer, module: ir.Module):
+    return ir.IntType(8).as_pointer()
+
+
+
+@emit_llvm.register
+def _(op: PointerAlloc, builder: ir.IRBuilder, n: ir.Value):
+    module: ir.Module = builder.module
+    try:
+        fn = module.get_global('malloc')
+    except KeyError:
+        fnty = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(64)])
+        fn = ir.Function(module, fnty, name='malloc')
+
+    return builder.call(fn, [n])
+
+
+@emit_llvm.register
+def _(op: PointerFree, builder: ir.IRBuilder, ptr: ir.Value):
+    module: ir.Module = builder.module
+    try:
+        fn = module.get_global('free')
+    except KeyError:
+        fnty = ir.FunctionType(ir.IntType(32), [ir.IntType(8).as_pointer()])
+        fn = ir.Function(module, fnty, name='free')
+
+    return builder.call(fn, [ptr])
+
+
+
+@emit_llvm.register
+def _(op: PointerStore, builder: ir.IRBuilder, ptr: ir.Value, item: ir.Value):
+    builder.store(item, builder.bitcast(ptr, item.type.as_pointer()))
+    return ir.Constant(ir.IntType(32), 0)
+
+
+@emit_llvm.register
+def _(op: PointerLoad, builder: ir.IRBuilder, ptr: ir.Value):
+    item_type = emit_llvm_type(op.result_type, builder.module)
+    return builder.load(builder.bitcast(ptr, item_type.as_pointer()))
+
+
+@emit_llvm.register
+def _(op: IntToPtr, builder: ir.IRBuilder, n: ir.Value):
+    return builder.inttoptr(n, ir.IntType(8).as_pointer())
+
+
+@emit_llvm.register
+def _(op: PointerBinop, builder: ir.IRBuilder, lhs: ir.Value, rhs: ir.Value):
+    cmpstr = {
+        operator.eq: '==',
+        operator.ne: '!=',
+    }[op.py_impl]
+    return builder.icmp_unsigned(cmpstr, lhs, rhs)
+
