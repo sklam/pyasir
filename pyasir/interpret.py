@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from collections import ChainMap
 from functools import singledispatch
 from pprint import pformat
 
@@ -54,14 +53,13 @@ class Context:
         return res
 
     def nested_call(self, node: _df.DFNode, scope: dict[str, Any]) -> Data:
-        nested = Context(scope=ChainMap(scope, self.scope), cache={})
-        nested = Context(scope=ChainMap(scope, self.scope), cache=self.cache)
+        nested = Context(scope=scope, cache={})
         return nested.eval(node)
 
     def do_loop(
         self, *values: _df.DFNode, scope: dict[str, Any]
     ) -> tuple[Data, ...]:
-        nested = Context(scope=ChainMap(scope, self.scope), cache={})
+        nested = Context(scope=scope, cache={})
         return tuple([nested.eval(v) for v in values])
 
 
@@ -92,6 +90,11 @@ def _eval_node_EnterNode(node: _df.EnterNode, ctx: Context):
 @eval_node.register
 def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     pred = ctx.eval(node.pred).value
+    # make sure the arguments are evaluated first
+    first_case = node.cases[0]
+    first_scope = first_case.scope
+    for v_val in first_scope.values():
+        ctx.eval(v_val)
     for case in node.cases:
         if pred == case.region.case_pred.py_value:
             return ctx.eval(case)

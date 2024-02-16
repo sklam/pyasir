@@ -38,7 +38,7 @@ def generate(funcdef: _df.FuncDef):
     print(llmod)
 
 
-    llvm.view_dot_graph(llvm.get_function_cfg(llmod.get_function(fn.name)), view=True)
+    # llvm.view_dot_graph(llvm.get_function_cfg(llmod.get_function(fn.name)), view=True)
 
     tm = llvm.Target.from_default_triple().create_target_machine()
     print(tm.emit_assembly(llmod))
@@ -139,13 +139,13 @@ class LLVMBackend:
     def nested_call(
         self, node: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]
     ) -> ir.Value:
-        nested = _dc_replace(self, scope=ChainMap(scope, self.scope), cache=ChainMap({}, self.cache))
+        nested = _dc_replace(self, scope=scope, cache={})
         return nested.emit(node)
 
     def do_loop(
         self, *values: _df.DFNode, scope: dict[str, Any]
     ) -> tuple[ir.Value, tuple[ir.Value, ...]]:
-        nested = _dc_replace(self, scope=ChainMap(scope, self.scope), cache={})
+        nested = _dc_replace(self, scope=scope, cache={})
         pred, *values = [nested.emit(v) for v in values]
         return pred, values
 
@@ -175,10 +175,11 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
     bb_after = be.builder.append_basic_block("swt_after")
     with be.builder.goto_block(bb_default):
         be.builder.unreachable()
+    # evaluate the arguments first
     first_case = node.cases[0]
     first_scope = first_case.scope
-    inner_scope = {k_arg: be.emit(v_val)
-                   for k_arg, v_val in first_scope.items()}
+    for v_val in first_scope.values():
+        be.emit(v_val)
 
     cases = []
     case_phis = []
