@@ -199,6 +199,7 @@ class Translator:
         return """
 import pyasir
 from pyasir import nodes as __pir__
+from pyasir.typedefs import io
 """
 
 
@@ -432,7 +433,7 @@ def _(tree: _mypy.AssignmentStmt) -> SourceGen:
     return tree
 
 
-def prepare_iterator_call(iter_expr: _mypy.CallExpr) -> tuple[ast.AST, list[ast.AST]]:
+def prepare_iterator_call(iter_expr: _mypy.CallExpr) -> tuple[SourceGen, list[SourceGen]]:
     callee = iter_expr.callee
     args = iter_expr.args
     return mypy_to_ast(callee), list(map(mypy_to_ast, args))
@@ -457,7 +458,7 @@ def _(tree: _mypy.ForStmt) -> SourceGen:
         "$args": ', '.join([index_name, *more]),
         "$loopargs": ', '.join(["iterator", *more]),
         "$iter_callee": iter_callee,
-        "$iter_args": ', '.join(ast.unparse(iter_args)),
+        "$iter_args": ', '.join([arg.generate_source() for arg in iter_args]),
         "$iter": mypy_to_ast(iter_expr),
         "$body": body_block,
     }
@@ -468,9 +469,9 @@ iterator = __pir__.call($iter_callee, $iter_args)
 @__pir__.dialect.py.forloop
 def loop($args):
     $body
-    return $args
+    return __pir__.pack($args)
 
-$args = loop($loopargs)
+[$args] = __pir__.unpack(loop($loopargs))
 """,
         repl,
     )

@@ -5,13 +5,13 @@ def do_sum(n: Int64) -> Int64:
     c = 0
     for i in range(n):
         # print('i =', i)
-        c += i
+        c = c + i
 
     if c < 100:
-        c += 100
+        c = c + 100
 
     while c < 200:
-        c += 13
+        c = c + 13
 
     return c
 

@@ -12,6 +12,7 @@ from pyasir.nodes import (
     ValueNode,
     UnpackNode,
     node_replace_attrs,
+    Scope,
 )
 
 from pyasir import datatypes as _dt
@@ -34,39 +35,22 @@ class ForLoopNode(RegionNode):
         [args, kwargs] = self._pre_call(args, kwargs)
         assert len(args)
         indarg = node_replace_attrs(args[0], datatype=args[0].datatype.element)
-        scope, nodes = self._call_region(
+        scope, loopbody = self._call_region(
             self.region_func, (indarg, *args[1:]), kwargs
         )
-        ind, *values = nodes
-        body_values = tuple([ind, *values])
 
-        loopbody = ForLoopBodyNode(pyasir.Packed(), body_values, scope)
-        value_nodes = tuple(
-            [
-                UnpackNode(loopbody.values[i].datatype, loopbody, i)
-                for i in range(len(body_values))
-            ]
-        )
-        return ForLoopExprNode(self, values=value_nodes)
+        return ForLoopExprNode(loopbody.datatype,
+                               region=self, loopbody=loopbody, scope=scope)
 
 
 @dataclass(frozen=True, order=False)
-class ForLoopBodyNode(DFNode):
-    datatype: _dt.DataType
-    values: tuple[ValueNode, ...]
-    scope: dict
+class ForLoopExprNode(ValueNode):
+    region: ForLoopNode
+    loopbody: ValueNode
+    scope: Scope
 
     def __hash__(self):
         return id(self)
-
-
-@dataclass(frozen=True, order=False)
-class ForLoopExprNode(DFNode):
-    parent: ForLoopNode
-    values: tuple[ValueNode, ...]
-
-    def __iter__(self):
-        return iter(self.values)
 
 
 PyDialect.forloop = ForLoopNode.make
@@ -79,7 +63,7 @@ registry["py"] = PyDialect
 
 
 @eval_node.register
-def _eval_node_ForLoopBodyNode(node: ForLoopBodyNode, ctx: Context):
+def _eval_node_ForLoopExprNode(node: ForLoopExprNode, ctx: Context):
     scope = node.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
     scope_values = list(inner_scope.values())
@@ -102,6 +86,7 @@ def _eval_node_ForLoopBodyNode(node: ForLoopBodyNode, ctx: Context):
 
         loop_values = [Data(ind), *scope_values[1:]]
         scope = dict(zip(loop_keys, loop_values))
-        scope_values = ctx.do_loop(*node.values, scope=scope)
+        packed_values = ctx.do_loop(node.loopbody, scope=scope)
+        scope_values = packed_values.value
 
     return Data(tuple(scope_values))
