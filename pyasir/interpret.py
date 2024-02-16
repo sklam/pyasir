@@ -57,10 +57,10 @@ class Context:
         return nested.eval(node)
 
     def do_loop(
-        self, *values: _df.DFNode, scope: dict[str, Any]
-    ) -> tuple[Data, ...]:
+        self, body_value: _df.DFNode, scope: dict[str, Any]
+    ) -> Data:
         nested = Context(scope=scope, cache={})
-        return tuple([nested.eval(v) for v in values])
+        return nested.eval(body_value)
 
 
 @singledispatch
@@ -109,26 +109,26 @@ def _eval_node_ExprNode(node: _df.ExprNode, ctx: Context):
 
 @eval_node.register
 def _eval_node_PackNode(node: _df.PackNode, ctx: Context):
-    return Data(tuple(map(ctx.eval, node.values)))
+    return Data(tuple(map(lambda x: ctx.eval(x).value, node.values)))
 
 
 @eval_node.register
 def _eval_node_UnpackNode(node: _df.UnpackNode, ctx: Context):
     values = ctx.eval(node.producer)
-    return values.value[node.index]
+    return Data(values.value[node.index])
 
 
 @eval_node.register
-def _eval_node_LoopBodyNode(node: _df.LoopBodyNode, ctx: Context):
+def _eval_node_LoopExprNode(node: _df.LoopExprNode, ctx: Context):
     scope = node.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
     while True:
-        # print('loop', test:={k.name: v.value for k, v in inner_scope.items()})
-        # print("     curnode.data=", test['curnode'].data)
-        pred, *values = ctx.do_loop(*node.values, scope=inner_scope)
-        # print('    out', values)
-        if pred.value:
-            inner_scope = dict(zip(scope.keys(), values))
+        # print('loop', {k.name: v.value for k, v in inner_scope.items()})
+        loopbody = ctx.do_loop(node.loopbody, scope=inner_scope)
+        # print('    loopbody', loopbody)
+        pred, values = loopbody.value
+        if pred:
+            inner_scope = dict(zip(scope.keys(), map(Data, values)))
         else:
             break
     return Data(values)

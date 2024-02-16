@@ -143,11 +143,10 @@ class LLVMBackend:
         return nested.emit(node)
 
     def do_loop(
-        self, *values: _df.DFNode, scope: dict[str, Any]
-    ) -> tuple[ir.Value, tuple[ir.Value, ...]]:
+        self, values: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]
+    ) -> ir.Value:
         nested = _dc_replace(self, scope=scope, cache={})
-        pred, *values = [nested.emit(v) for v in values]
-        return pred, values
+        return nested.emit(values)
 
 
 @singledispatch
@@ -238,14 +237,14 @@ def _eval_node_PackNode(node: _df.PackNode, be: LLVMBackend):
     return struct
 
 
-@emit_node.register(_df.UnpackNode)
+@emit_node.register
 def _emit_node_UnpackNode(node: _df.UnpackNode, be: LLVMBackend):
     values = be.emit(node.producer)
     return be.builder.extract_value(values, node.index)
 
 
-@emit_node.register(_df.LoopBodyNode)
-def _emit_node_LoopBodyNode(node: _df.LoopBodyNode, be: LLVMBackend):
+@emit_node.register
+def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     scope = node.scope
 
     bb_head = be.builder.basic_block
@@ -261,9 +260,15 @@ def _emit_node_LoopBodyNode(node: _df.LoopBodyNode, be: LLVMBackend):
     for phi, lv in zip(phis.values(), incoming_values.values()):
         phi.add_incoming(lv, bb_head)
 
-    loop_pred, loop_values = be.do_loop(*node.values, scope=phis)
-    bb_out_loop = be.builder.block
+    loopbody = be.do_loop(node.loopbody, scope=phis)
+    loop_pred = be.builder.extract_value(loopbody, 0)
+    loop_values_packed = be.builder.extract_value(loopbody, 1)
+    loop_values = [
+        be.builder.extract_value(loop_values_packed, i)
+        for i in range(len(node.datatype.elements))
+    ]
 
+    bb_out_loop = be.builder.block
     # phi loop back
     for phi, lv in zip(phis.values(), loop_values):
         phi.add_incoming(lv, bb_out_loop)
@@ -274,12 +279,7 @@ def _emit_node_LoopBodyNode(node: _df.LoopBodyNode, be: LLVMBackend):
     )
 
     be.builder.position_at_end(bb_endloop)
-    struct = ir.Constant(
-        ir.LiteralStructType([v.type for v in loop_values]), None
-    )
-    for i, v in enumerate(loop_values):
-        struct = be.builder.insert_value(struct, v, i)
-    return struct
+    return loop_values_packed
 
 
 def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):

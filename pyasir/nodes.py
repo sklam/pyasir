@@ -268,20 +268,11 @@ class LoopNode(RegionNode):
     def __call__(self, *args: Any, **kwargs: Any):
         [args, kwargs] = self._pre_call(args, kwargs)
         scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
-        cont, values = nodes
-        body_values = tuple([cont, *values])
-        for v in body_values:
-            assert isinstance(v, ValueNode)
-
-        loopbody = LoopBodyNode(pyasir.Packed.make(*[v.datatype for v in body_values]), body_values, scope)
-        pred_node = UnpackNode(loopbody.values[0].datatype, loopbody, 0)
-        value_nodes = tuple(
-            [
-                UnpackNode(loopbody.values[i + 1].datatype, loopbody, i)
-                for i in range(len(values))
-            ]
-        )
-        return LoopExprNode(self, pred=pred_node, values=value_nodes)
+        pred, body = nodes
+        loopbody = pack(pred, body)
+        return LoopExprNode(body.datatype, self,
+                            loopbody=loopbody,
+                            scope=scope)
 
 
 @dataclass(frozen=True)
@@ -304,23 +295,13 @@ class CaseNode(RegionNode):
 
 
 @dataclass(frozen=True)
-class LoopBodyNode(DFNode):
-    datatype: _dt.DataType
-    values: tuple[ValueNode, ...]
+class LoopExprNode(ValueNode):
+    parent: LoopNode
+    loopbody: ValueNode
     scope: Scope
 
     def __hash__(self):
         return id(self)
-
-
-@dataclass(frozen=True)
-class LoopExprNode(DFNode):
-    parent: LoopNode
-    pred: ValueNode
-    values: tuple[ValueNode, ...]
-
-    def __iter__(self):
-        return iter(self.values)
 
 
 @dataclass(frozen=True, order=False)
@@ -463,16 +444,6 @@ class EnterNode(ValueNode):
         return cls(
             datatype=node.datatype, region=region, node=node, scope=scope
         )
-
-    def __iter__(self):
-        if isinstance(self.node, LoopExprNode):
-            unpacked = [
-                UnpackNode(self.node.values[i].datatype, self.node, i)
-                for i in range(len(self.node.values))
-            ]
-            return iter(unpacked)
-        else:
-            raise NotImplementedError(self)
 
     def __hash__(self):
         return id(self)

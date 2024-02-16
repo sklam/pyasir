@@ -538,8 +538,8 @@ def swt_while($args) :
         @__pir__.loop
         def loop($args):
             $body
-            return $pred, ($args,)
-        [$args] = loop($args)
+            return $pred, __pir__.pack($args)
+        [$args] = __pir__.unpack(loop($args))
         return __pir__.pack($args)
 
     @__pir__.case(0)

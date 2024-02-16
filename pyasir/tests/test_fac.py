@@ -33,9 +33,9 @@ def fac_ir(n: pyasir.Int64) -> pyasir.Int64:
             def loop(n, y):
                 y *= n
                 n -= 1
-                return n > 1, (n, y)
+                return n > 1, df.pack(n, y)
 
-            n, y = loop(n, y)
+            n, y = df.unpack(loop(n, y))
             return df.pack(y)
 
         @df.case(0)
