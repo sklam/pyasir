@@ -29,14 +29,16 @@ def generate(funcdef: _df.FuncDef):
     lljit = make_llvm_jit(mod)
     # optimize
     pmb = llvm.create_pass_manager_builder()
-    pmb.opt_level = 3
+    pmb.opt_level = 2
     pmb.inlining_threshold = 200
     pm = llvm.create_module_pass_manager()
     pmb.populate(pm)
-
     llmod = llvm.parse_assembly(str(mod))
     pm.run(llmod)
     print(llmod)
+
+
+    llvm.view_dot_graph(llvm.get_function_cfg(llmod.get_function(fn.name)), view=True)
 
     tm = llvm.Target.from_default_triple().create_target_machine()
     print(tm.emit_assembly(llmod))
@@ -112,17 +114,23 @@ class LLVMBackend:
 
             scope = funcdef.bind_scope(fn.args, {})
             be = LLVMBackend(
-                module=self.module, scope=scope, builder=builder, cache={}
+                module=self.module, scope=scope, builder=builder, cache={},
             )
             res = be.emit(funcdef.node)
             be.builder.ret(res)
         return fn
 
     def emit(self, node: _df.DFNode) -> ir.Value:
+        print("<<<<", hex(id(node)), type(node))
+
         if node in self.cache:
             res = self.cache[node]
         else:
+            print(node.dump_shorten())
             data = emit_node(node, self)
+            # print(f"emit {str(node)[:100]}")
+            # print("-->", data.type)
+            # print(self.builder.function)
             self.cache[node] = data
             res = data
         assert isinstance(res, ir.Value)
@@ -131,7 +139,7 @@ class LLVMBackend:
     def nested_call(
         self, node: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]
     ) -> ir.Value:
-        nested = _dc_replace(self, scope=ChainMap(scope, self.scope), cache={})
+        nested = _dc_replace(self, scope=ChainMap(scope, self.scope), cache=ChainMap({}, self.cache))
         return nested.emit(node)
 
     def do_loop(
@@ -162,42 +170,34 @@ def _emit_node_EnterNode(node: _df.EnterNode, be: LLVMBackend):
 
 @emit_node.register(_df.CaseExprNode)
 def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
-    bb_current = be.builder.basic_block
-    pred = be.emit(node.pred)
+    value = be.emit(node.pred)
+    bb_default = be.builder.append_basic_block("swt_default")
+    bb_after = be.builder.append_basic_block("swt_after")
+    with be.builder.goto_block(bb_default):
+        be.builder.unreachable()
+    first_case = node.cases[0]
+    first_scope = first_case.scope
+    inner_scope = {k_arg: be.emit(v_val)
+                   for k_arg, v_val in first_scope.items()}
 
-    bb_default = be.builder.append_basic_block("default")
-    bb_after = be.builder.append_basic_block("after")
-
-    bb_case_preds = {}
-    bb_case_outs = {}
-
+    cases = []
+    case_phis = []
     for case in node.cases:
-        bb_case = be.builder.append_basic_block(f"case")
+        bb_case = be.builder.append_basic_block(f"case_{case.region.case_pred.py_value}")
+        cases.append((case.region.case_pred.py_value, bb_case))
+        with be.builder.goto_block(bb_case):
+            case_output = be.emit(case)
+            be.builder.branch(bb_after)
+            case_phis.append((be.builder.block, case_output))
 
-        be.builder.position_at_end(bb_current)
-        case_pred = ir.Constant(pred.type, case.region.case_pred.py_value)
-
-        be.builder.position_at_end(bb_case)
-        case_outs = be.emit(case)
-
-        bb_case_end = be.builder.basic_block
-        bb_case_preds[bb_case] = case_pred
-        bb_case_outs[bb_case_end] = case_outs
-
-        be.builder.branch(bb_after)
-
-    be.builder.position_at_end(bb_default)
-    be.builder.unreachable()
-
-    be.builder.position_at_end(bb_current)
-    swt = be.builder.switch(pred, bb_default)
-    for bb, case_val in bb_case_preds.items():
-        swt.add_case(case_val, bb)
+    swt = be.builder.switch(value, bb_default)
+    for case_val, bb_case in cases:
+        swt.add_case(case_val, bb_case)
 
     be.builder.position_at_end(bb_after)
-    phi = be.builder.phi(case_outs.type)
-    for bb, case_outs in bb_case_outs.items():
-        phi.add_incoming(case_outs, bb)
+    phi = be.builder.phi(case_phis[0][1].type)
+    for bb, val in case_phis:
+        phi.add_incoming(val, bb)
     return phi
 
 
@@ -261,10 +261,11 @@ def _emit_node_LoopBodyNode(node: _df.LoopBodyNode, be: LLVMBackend):
         phi.add_incoming(lv, bb_head)
 
     loop_pred, loop_values = be.do_loop(*node.values, scope=phis)
+    bb_out_loop = be.builder.block
 
     # phi loop back
     for phi, lv in zip(phis.values(), loop_values):
-        phi.add_incoming(lv, bb_loop)
+        phi.add_incoming(lv, bb_out_loop)
 
     # phi
     be.builder.cbranch(

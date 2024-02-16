@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, replace as _dc_replace
+from dataclasses import (
+    dataclass,
+    replace as _dc_replace,
+    fields as _dc_fields,
+)
 from functools import partial, partialmethod, singledispatch
 from typing import Any, Callable, Iterable
 from inspect import signature, isgenerator, Signature
 from collections.abc import Mapping
-from pprint import PrettyPrinter
+from pprint import PrettyPrinter, pprint
 
 import pyasir
 from . import datatypes as _dt
@@ -22,7 +26,14 @@ def _generic_binop(self, other, *, op):
 
 @dataclass(frozen=True)
 class DFNode:
-    ...
+    def dump_shorten(self) -> str:
+        fields = _dc_fields(self)
+        buf = []
+        buf.append(f"{self.__class__.__name__} [{hex(id(self))}] (")
+        for fd in fields:
+            buf.append(f"  {fd.name:10}: {fd.type:50} [{hex(id(getattr(self, fd.name)))}]")
+        buf.append(f")")
+        return '\n'.join(buf)
 
 
 def node_replace_attrs(node: DFNode, **attrs):
@@ -242,11 +253,7 @@ class SwitchNode(RegionNode):
                 raise _dt.TypeOpError(
                     f"incompatible type {n.datatype}; expect {nodes[0].datatype}"
                 )
-        out = EnterNode.make(
-            self,
-            CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes)),
-            scope=Scope({}),
-        )
+        out = CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes))
         return out
 
 
@@ -278,8 +285,7 @@ class LoopNode(RegionNode):
 
 
 @dataclass(frozen=True)
-class CaseExprNode(DFNode):
-    datatype: _dt.DataType
+class CaseExprNode(ValueNode):
     pred: DFNode
     cases: tuple[EnterNode, ...]
 

@@ -55,6 +55,7 @@ class Context:
 
     def nested_call(self, node: _df.DFNode, scope: dict[str, Any]) -> Data:
         nested = Context(scope=ChainMap(scope, self.scope), cache={})
+        nested = Context(scope=ChainMap(scope, self.scope), cache=self.cache)
         return nested.eval(node)
 
     def do_loop(
@@ -119,7 +120,10 @@ def _eval_node_LoopBodyNode(node: _df.LoopBodyNode, ctx: Context):
     scope = node.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
     while True:
+        # print('loop', test:={k.name: v.value for k, v in inner_scope.items()})
+        # print("     curnode.data=", test['curnode'].data)
         pred, *values = ctx.do_loop(*node.values, scope=inner_scope)
+        # print('    out', values)
         if pred.value:
             inner_scope = dict(zip(scope.keys(), values))
         else:

@@ -77,4 +77,5 @@ def test_fib_tail_recur_llvm():
 
 
 if __name__ == "__main__":
-    test_fib_tail_recur_llvm()
+    test_fib_llvm()
+    # test_fib_tail_recur_llvm()

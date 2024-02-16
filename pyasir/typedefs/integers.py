@@ -51,6 +51,7 @@ class Int64(IntegerType):
 
 @eval_op.register
 def _(op: IntBinop, lhs, rhs):
+    # print(op, lhs, rhs)
     return op.py_impl(lhs, rhs)
 
 

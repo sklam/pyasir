@@ -5,6 +5,7 @@ import llpyfe.types
 from llpyfe.parser import parse_file
 from llpyfe.translate import Translator
 from pyasir.interpret import interpret
+from pyasir.be_llvm import generate
 
 
 the_file = "./llpy_list.py"
@@ -30,6 +31,10 @@ def run_function(source, args):
     # pprint(node)
 
     res = interpret(node, *args)
+
+    jf = generate(node)
+    llvm_res = jf(*args)
+    assert llvm_res == res
     return res
 
 
@@ -38,6 +43,7 @@ def test():
     args = (5,)
     res = run_function(source, args)
     print("res =", res)
+
 
     # from llpy_hello import do_sum
     # assert res == do_sum(*args)

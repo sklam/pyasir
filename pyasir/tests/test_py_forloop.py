@@ -11,9 +11,9 @@ def forloop(n: Int64) -> Int64:
 
     @pir.dialect.py.forloop
     def loop(i, c):
-        return i, c + i
+        return pir.pack(i, c + i)
 
-    (i, c) = loop(iterator, c)
+    (i, c) = pir.unpack(loop(iterator, c))
     return i * c
 
 
