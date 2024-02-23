@@ -56,9 +56,7 @@ class Context:
         nested = Context(scope=scope, cache={})
         return nested.eval(node)
 
-    def do_loop(
-        self, body_value: _df.DFNode, scope: dict[str, Any]
-    ) -> Data:
+    def do_loop(self, body_value: _df.DFNode, scope: dict[str, Any]) -> Data:
         nested = Context(scope=scope, cache={})
         return nested.eval(body_value)
 

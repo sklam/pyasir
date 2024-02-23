@@ -31,9 +31,11 @@ class DFNode:
         buf = []
         buf.append(f"{self.__class__.__name__} [{hex(id(self))}] (")
         for fd in fields:
-            buf.append(f"  {fd.name:10}: {fd.type:50} [{hex(id(getattr(self, fd.name)))}]")
+            buf.append(
+                f"  {fd.name:10}: {fd.type:50} [{hex(id(getattr(self, fd.name)))}]"
+            )
         buf.append(f")")
-        return '\n'.join(buf)
+        return "\n".join(buf)
 
 
 def node_replace_attrs(node: DFNode, **attrs):
@@ -50,6 +52,8 @@ class ValueNode(DFNode):
     __add__ = __radd__ = partialmethod(_generic_binop, op="+")
     __sub__ = partialmethod(_generic_binop, op="-")
     __mul__ = partialmethod(_generic_binop, op="*")
+    __and__ = partialmethod(_generic_binop, op="&")
+    __or__ = partialmethod(_generic_binop, op="|")
 
     __le__ = partialmethod(_generic_binop, op="<=")
     __ge__ = partialmethod(_generic_binop, op=">=")
@@ -270,9 +274,7 @@ class LoopNode(RegionNode):
         scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
         pred, body = nodes
         loopbody = pack(pred, body)
-        return LoopExprNode(body.datatype, self,
-                            loopbody=loopbody,
-                            scope=scope)
+        return LoopExprNode(body.datatype, self, loopbody=loopbody, scope=scope)
 
 
 @dataclass(frozen=True)
@@ -334,9 +336,9 @@ class PackNode(ValueNode):
     @classmethod
     def make(cls, *values: ValueNode):
         values = as_node_args(values)
-        return cls(pyasir.Packed.make(*[v.datatype for v in values]),
-                   values=values)
-
+        return cls(
+            pyasir.Packed.make(*[v.datatype for v in values]), values=values
+        )
 
 
 func = FuncNode.make
@@ -346,6 +348,7 @@ loop = LoopNode.make
 
 pack = PackNode.make
 unpack = ExpandNode.make
+
 
 @dataclass(frozen=True)
 class LiteralNode(ValueNode):
@@ -408,6 +411,9 @@ class ExprNode(ValueNode):
     op: _dt.OpTrait
     args: tuple[ValueNode, ...]
 
+    def __hash__(self):
+        return id(self)
+
 
 @dataclass(frozen=True)
 class CallNode(ValueNode):
@@ -437,7 +443,6 @@ class EnterNode(ValueNode):
     def __post_init__(self):
         assert isinstance(self.scope, Scope)
 
-
     @classmethod
     def make(cls, region, node, scope):
         _sentry_scope(scope)
@@ -457,7 +462,10 @@ def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):
 
 
 def cast(value: ValueNode, to_type: _dt.DataType) -> DFNode:
+    value = as_node(value)
     to_type = _dt.ensure_type(to_type)
+    if value.datatype == to_type:
+        return value
     op = to_type.get_cast(value.datatype)
     return ExprNode(op.result_type, op, args=tuple([value]))
 
@@ -475,3 +483,8 @@ def call(__func: Callable, *args, **kwargs) -> DFNode:
     fty = Function.lookup(__func)
     op = fty.get_call(args, kwargs)
     return CallNode(op.result_type, op, args, kwargs)
+
+
+def zeroinit(ty: _dt.DataType) -> DFNode:
+    op = ty.get_zero()
+    return ExprNode(op.result_type, op, args=())

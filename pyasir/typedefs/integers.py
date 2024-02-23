@@ -32,6 +32,7 @@ CMPOPS = {
     "<": lambda restype: IntBinop(restype, operator.lt),
 }
 
+
 class IntegerType(DataType):
     bitwidth: int
 

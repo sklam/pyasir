@@ -92,6 +92,7 @@ def _struct_ctype(datatype: StructType):
         return _struct_ctype.cache[datatype]
 
     fields = [(k, emit_c_type(t)) for k, t in datatype.get_fields()]
+
     class c_struct(ctypes.Structure):
         _fields_ = fields
 

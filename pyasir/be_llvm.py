@@ -37,8 +37,9 @@ def generate(funcdef: _df.FuncDef):
     pm.run(llmod)
     print(llmod)
 
-
-    # llvm.view_dot_graph(llvm.get_function_cfg(llmod.get_function(fn.name)), view=True)
+    llvm.view_dot_graph(
+        llvm.get_function_cfg(llmod.get_function(fn.name)), view=True
+    )
 
     tm = llvm.Target.from_default_triple().create_target_machine()
     print(tm.emit_assembly(llmod))
@@ -114,15 +115,16 @@ class LLVMBackend:
 
             scope = funcdef.bind_scope(fn.args, {})
             be = LLVMBackend(
-                module=self.module, scope=scope, builder=builder, cache={},
+                module=self.module,
+                scope=scope,
+                builder=builder,
+                cache={},
             )
             res = be.emit(funcdef.node)
             be.builder.ret(res)
         return fn
 
     def emit(self, node: _df.DFNode) -> ir.Value:
-        print("<<<<", hex(id(node)), type(node))
-
         if node in self.cache:
             res = self.cache[node]
         else:
@@ -183,7 +185,9 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
     cases = []
     case_phis = []
     for case in node.cases:
-        bb_case = be.builder.append_basic_block(f"case_{case.region.case_pred.py_value}")
+        bb_case = be.builder.append_basic_block(
+            f"case_{case.region.case_pred.py_value}"
+        )
         cases.append((case.region.case_pred.py_value, bb_case))
         with be.builder.goto_block(bb_case):
             case_output = be.emit(case)
@@ -229,9 +233,7 @@ def _emit_node_LiteralNode(node: _df.LiteralNode, be: LLVMBackend):
 @emit_node.register
 def _eval_node_PackNode(node: _df.PackNode, be: LLVMBackend):
     values = [be.emit(v) for v in node.values]
-    struct = ir.Constant(
-        ir.LiteralStructType([v.type for v in values]), None
-    )
+    struct = ir.Constant(ir.LiteralStructType([v.type for v in values]), None)
     for i, v in enumerate(values):
         struct = be.builder.insert_value(struct, v, i)
     return struct

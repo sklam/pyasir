@@ -39,8 +39,9 @@ class ForLoopNode(RegionNode):
             self.region_func, (indarg, *args[1:]), kwargs
         )
 
-        return ForLoopExprNode(loopbody.datatype,
-                               region=self, loopbody=loopbody, scope=scope)
+        return ForLoopExprNode(
+            loopbody.datatype, region=self, loopbody=loopbody, scope=scope
+        )
 
 
 @dataclass(frozen=True, order=False)

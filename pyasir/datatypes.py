@@ -29,10 +29,13 @@ class DataType:
         return cls.__singleton
 
     def get_binop(self, op: str, lhs: DataType, rhs: DataType) -> OpTrait:
-        raise NotImplementedError
+        raise NotImplementedError(self, op, lhs, rhs)
 
     def get_cast(self, valtype: DataType) -> OpTrait:
-        raise NotImplementedError
+        raise NotImplementedError(self, valtype)
+
+    def get_zero(self) -> OpTrait:
+        return ZeroOpTrait(self)
 
     def attribute_lookup(self, attr: str) -> AttrOp:
         raise AttributeError(attr)
@@ -52,17 +55,27 @@ class OpTrait:
         assert isinstance(self.result_type, DataType)
 
 
+@dataclass(frozen=True)
+class ZeroOpTrait(OpTrait):
+    pass
+
 
 def define_op(trait_type: Type[OpTrait]):
     def wrap(fn):
         def handler(*args, **kwargs):
             from pyasir.nodes import ExprNode, as_node_args
             from inspect import signature
+
             ba = signature(fn).bind(*args, **kwargs)
             assert not ba.kwargs
-            return ExprNode(trait_type.result_type, trait_type,
-                            args=as_node_args(tuple(ba.args)))
+            return ExprNode(
+                trait_type.result_type,
+                trait_type,
+                args=as_node_args(tuple(ba.args)),
+            )
+
         return handler
+
     return wrap
 
 

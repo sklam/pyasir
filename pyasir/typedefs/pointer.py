@@ -27,12 +27,9 @@ from .integers import Bool
 from .io import IO
 
 
-
-
 @dataclass(frozen=True)
 class PointerBinop(OpTrait):
     py_impl: Callable
-
 
 
 PTR_BINOPS = {
@@ -42,13 +39,13 @@ PTR_BINOPS = {
 
 
 class Pointer(_dt.DataType):
-
-    def get_binop(self, op: str, lhs: _dt.DataType, rhs: _dt.DataType) -> PointerBinop:
+    def get_binop(
+        self, op: str, lhs: _dt.DataType, rhs: _dt.DataType
+    ) -> PointerBinop:
         optrait = PTR_BINOPS[op](Bool())
         if lhs != self or rhs != self:
             raise TypeOpError(f"unsupported op for {op}({lhs, rhs})")
         return optrait
-
 
 
 @dataclass(frozen=True)
@@ -80,24 +77,31 @@ def free(p: Pointer) -> IO:
 class PointerLoad(OpTrait):
     pass
 
+
 @dataclass(frozen=True)
 class PointerStore(OpTrait):
     item_type: _dt.DataType
 
 
-def load(dt: _dt.DataType, ptr: Pointer) :
+def load(dt: _dt.DataType, ptr: Pointer):
     dt = _dt.ensure_type(dt)
     return _df.ExprNode(dt, PointerLoad(dt), args=(ptr,))
 
+
 def store(ptr: Pointer, item) -> IO:
-    return _df.ExprNode(IO(), PointerStore(IO(), item_type=item.datatype), args=(ptr, item))
+    return _df.ExprNode(
+        IO(), PointerStore(IO(), item_type=item.datatype), args=(ptr, item)
+    )
 
 
 def as_pointer(ptr: Pointer) -> _df.ValueNode:
-    return _df.ExprNode(Pointer(), IntToPtr(Pointer()), args=(_df.as_node(ptr),))
+    return _df.ExprNode(
+        Pointer(), IntToPtr(Pointer()), args=(_df.as_node(ptr),)
+    )
 
 
 # -----------------------------------------------------------------------------
+
 
 @eval_op.register
 def eval_op_PointerAlloc(op: PointerAlloc, n):
@@ -108,6 +112,7 @@ def eval_op_PointerAlloc(op: PointerAlloc, n):
     print("malloc", hex(out))
     return out
 
+
 @eval_op.register
 def eval_op_PointerFree(op: PointerFree, p):
     print("free", hex(p))
@@ -117,6 +122,7 @@ def eval_op_PointerFree(op: PointerFree, p):
     free.restype = None
     free(p)
     return 0
+
 
 @eval_op.register
 def eval_op_IntToPtr(op: IntToPtr, p):
@@ -132,6 +138,7 @@ def eval_op_PointerLoad(op: PointerLoad, ptr):
     print("load", hex(ptr))
     out = castedptr[0]
     return out
+
 
 @eval_op.register
 def eval_op_PointerStore(op: PointerStore, ptr, item):
@@ -150,7 +157,6 @@ def _(datatype: Pointer):
     return ctypes.c_size_t
 
 
-
 @eval_op.register
 def _(op: PointerBinop, lhs, rhs):
     assert op.py_impl == operator.ne
@@ -160,20 +166,20 @@ def _(op: PointerBinop, lhs, rhs):
 
 # -----------------------------------------------------------------------------
 
+
 @emit_llvm_type.register
 def _(datatype: Pointer, module: ir.Module):
     return ir.IntType(8).as_pointer()
-
 
 
 @emit_llvm.register
 def _(op: PointerAlloc, builder: ir.IRBuilder, n: ir.Value):
     module: ir.Module = builder.module
     try:
-        fn = module.get_global('malloc')
+        fn = module.get_global("malloc")
     except KeyError:
         fnty = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(64)])
-        fn = ir.Function(module, fnty, name='malloc')
+        fn = ir.Function(module, fnty, name="malloc")
 
     return builder.call(fn, [n])
 
@@ -182,13 +188,12 @@ def _(op: PointerAlloc, builder: ir.IRBuilder, n: ir.Value):
 def _(op: PointerFree, builder: ir.IRBuilder, ptr: ir.Value):
     module: ir.Module = builder.module
     try:
-        fn = module.get_global('free')
+        fn = module.get_global("free")
     except KeyError:
         fnty = ir.FunctionType(ir.IntType(32), [ir.IntType(8).as_pointer()])
-        fn = ir.Function(module, fnty, name='free')
+        fn = ir.Function(module, fnty, name="free")
 
     return builder.call(fn, [ptr])
-
 
 
 @emit_llvm.register
@@ -211,8 +216,7 @@ def _(op: IntToPtr, builder: ir.IRBuilder, n: ir.Value):
 @emit_llvm.register
 def _(op: PointerBinop, builder: ir.IRBuilder, lhs: ir.Value, rhs: ir.Value):
     cmpstr = {
-        operator.eq: '==',
-        operator.ne: '!=',
+        operator.eq: "==",
+        operator.ne: "!=",
     }[op.py_impl]
     return builder.icmp_unsigned(cmpstr, lhs, rhs)
-

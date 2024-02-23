@@ -5,3 +5,5 @@ from .packed import Packed
 from .struct import Struct
 from .functions import Function
 from .pointer import Pointer
+
+from . import _defaults
