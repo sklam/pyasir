@@ -48,11 +48,14 @@ class SourceBlock(SourceGen):
                 self.statements.append(stmt)
             else:
                 assert not isinstance(stmt, ast.AST)
-        assert self.statements
 
     def generate_ast(self) -> ast.AST:
         nodes = [stmt.generate_ast() for stmt in self.statements]
         return ast.Module(body=nodes, type_ignores=())
+
+    @staticmethod
+    def empty() -> SourceBlock:
+        return SourceBlock([])
 
 
 @dataclass(frozen=True)
@@ -484,13 +487,16 @@ def _(tree: _mypy.IfStmt) -> SourceGen:
     [body_tree] = tree.body
     pred_expr = mypy_to_ast(pred_tree)
     body_block = mypy_to_ast(body_tree)
-    assert tree.else_body is None
+    else_block = (mypy_to_ast(tree.else_body)
+                  if tree.else_body is not None
+                  else SourceBlock.empty())
 
     modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
     repl = {
         "$args": ', '.join(modified_names),
         "$pred": pred_expr,
         "$body": body_block,
+        "$else_body": else_block,
     }
 
     return ast_template("""
@@ -503,6 +509,7 @@ def switch($args):
 
     @__pir__.case(0)
     def elseblk($args):
+        $else_body
         return __pir__.pack($args)
 
     yield ifblk
@@ -646,6 +653,11 @@ def _(tree: _mypy.StrExpr) -> SourceGen:
 @_mypy_to_ast.register
 def _(tree: _mypy.IntExpr) -> SourceGen:
     return ast_parse_eval(f"{tree.value}")
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.PassStmt) -> SourceGen:
+    return SourceBlock.empty()
 
 
 def get_funcdef_args(fndef: _mypy.FuncDef) -> tuple[str]:
