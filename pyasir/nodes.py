@@ -112,6 +112,10 @@ class DFNode:
         buf.append(f")")
         return "\n".join(buf)
 
+    def to_graphviz(self):
+        from .graphviz_backend import node_as_graphviz
+        return node_as_graphviz(self)
+
 
 def node_replace_attrs(node: DFNode, **attrs):
     return _dc_replace(node, **attrs)
@@ -275,7 +279,7 @@ class FuncNode(RegionNode):
 
 @custom_pprint
 @dataclass(frozen=True)
-class FuncDef:
+class FuncDef(DFNode):
     func: Callable
     argtys: tuple[_dt.DataType, ...]
     retty: _dt.DataType
@@ -290,6 +294,7 @@ class FuncDef:
     def bind_scope(self, args, kwargs) -> Scope:
         ba = signature(self.func).bind(*args, **kwargs)
         return Scope({an: ba.arguments[an.name] for an in self.argnodes})
+
 
 @custom_pprint
 @dataclass(frozen=True)
