@@ -62,21 +62,20 @@ class RAII:
     def __init__(self, state: IO) -> None:
         self._state = state
         self._cleanups = []
-        self._expects = []
+        self._expects = [_df.as_node(True)]
 
     def do(self, expr_region, *, expect=None, cleanup=None) -> _df.ValueNode:
         # prelude
         if expect is None:
             expect = lambda x: True
-        if cleanup is None:
-            cleanup = lambda x: seq()
+
 
         # body
         state = self._state
 
         fn, scope = prepare_closure_as_args(expr_region)
 
-        predicate = reduce(operator.and_, self._expects, _df.as_node(True))
+        predicate = self._expects[-1]
 
         # manually build up a case expression
         # ok case
@@ -98,17 +97,21 @@ class RAII:
         # epilog
         state, valexpr = _df.unpack(_df.pack(state, valexpr))
 
-        self._expects.append(_df.as_node(expect(valexpr)))
+        self._expects.append(self._expects[-1] & _df.as_node(expect(valexpr)))
 
-        self._cleanups.append((valexpr, cleanup))
+        if cleanup is not None:
+            self._cleanups.append((valexpr, cleanup))
         self._state = state
         return valexpr
 
     def complete(self, retval: _df.ValueNode) -> _df.ValueNode:
         seq = self._state
+        args = [seq]
         for val, cleanup in self._cleanups:
-            seq = sync(seq, cleanup(val))
-        return sync(seq, retval)
+            args.append(cleanup(val))
+        args.append(retval)
+        [*_before, last] = _df.unpack(_df.pack(*args))
+        return last
 
 
 def sync(io, *args) -> _df.DFNode:
