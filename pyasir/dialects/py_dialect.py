@@ -19,10 +19,12 @@ from pyasir import datatypes as _dt
 import pyasir
 from .registry import registry
 from pyasir.interpret import eval_node, Context, Data
+from pyasir.nodes import custom_pprint
 
 PyDialect = SimpleNamespace()
 
 
+@custom_pprint
 @dataclass(frozen=True)
 class ForLoopNode(RegionNode):
     region_func: Callable
@@ -44,6 +46,7 @@ class ForLoopNode(RegionNode):
         )
 
 
+@custom_pprint
 @dataclass(frozen=True, order=False)
 class ForLoopExprNode(ValueNode):
     region: ForLoopNode
