@@ -12,44 +12,58 @@ import pyasir.datatypes as _dt
 
 def node_as_graphviz(node: _df.DFNode):
     g = gv.Digraph()
-    gv_node(node, g, cache=set())
+    ctx = Context()
+    gv_node(node, g, ctx=ctx)
+    ctx.finish(g)
     return g
 
 
 def get_node_name(node) -> str:
-    return f"{node.__class__}@{hex(id(node))}"
+    return f"{node.__class__.__name__}@{hex(id(node))}"
 
 
+@_dc.dataclass(frozen=True)
+class Context:
+    cache: set[int] = _dc.field(default_factory=set)
+    edges: list[tuple] = _dc.field(default_factory=list)
 
-def check_cache(cache: set, node_id: str):
-    if node_id in cache:
-        return False
-    else:
-        cache.add(node_id)
-        return True
+    def check_cache(self, node_id: str):
+        cache = self.cache
+        if node_id in cache:
+            return False
+        else:
+            cache.add(node_id)
+            return True
+
+    def add_edge(self, *args, **kwargs):
+        self.edges.append((args, kwargs))
+
+    def finish(self, g):
+        for args, kwargs in self.edges:
+            g.edge(*args, **kwargs)
 
 
 
 @singledispatch
-def gv_node(node, g: gv.Digraph, cache: set):
+def gv_node(node, g: gv.Digraph, ctx: Context):
     this = get_node_name(node)
-    if check_cache(cache, this):
+    if ctx.check_cache(this):
         g.node(this, label=gv.escape(repr(node)), shape='oval')
 
 
 @gv_node.register
-def _(node: tuple, g: gv.Digraph, cache):
+def _(node: tuple, g: gv.Digraph, ctx):
     this = get_node_name(node)
-    if check_cache(cache, this):
+    if ctx.check_cache(this):
         g.node(this, label="tuple", shape='rect')
         items = enumerate(node)
-        render_items(this, items, g, cache)
+        render_items(this, items, g, ctx)
 
 
 @gv_node.register
-def _(node: _df.DFNode, g: gv.Digraph, cache):
+def _(node: _df.DFNode, g: gv.Digraph, ctx):
     this = get_node_name(node)
-    if check_cache(cache, this):
+    if ctx.check_cache(this):
         if isinstance(node, _df.LiteralNode):
             g.node(this, label=repr(node), shape='rect')
             return
@@ -57,13 +71,13 @@ def _(node: _df.DFNode, g: gv.Digraph, cache):
         elif isinstance(node, _df.ExprNode):
             g.node(this, label=f"{node.__class__.__name__} {node.op}", shape='rect')
             items = enumerate(node.args)
-            render_items(this, items, g, cache)
+            render_items(this, items, g, ctx)
             return
 
         elif isinstance(node, _df.UnpackNode):
             g.node(this, label=f"{node.__class__.__name__} {node.index}", shape='rect')
             items = [('producer', node.producer)]
-            render_items(this, items, g, cache)
+            render_items(this, items, g, ctx)
             return
 
         elif isinstance(node, _df.ArgNode):
@@ -75,25 +89,28 @@ def _(node: _df.DFNode, g: gv.Digraph, cache):
 
             items = [(fd.name, getattr(node, fd.name)) for fd in _dc.fields(node)]
             if isinstance(node, _df.EnterNode):
+                sub_items = dict(items)
+                scope_item = sub_items.pop('scope')
+                render_items(this, [('scope', scope_item)], g, ctx)
                 with g.subgraph(name=f"cluster_{this}") as g:
-                    render_items(this, items, g, cache)
+                    render_items(this, list(sub_items.items()), g, ctx)
             else:
-                render_items(this, items, g, cache)
+                render_items(this, items, g, ctx)
 
 
 @gv_node.register
-def _(node: _df.Scope, g: gv.Digraph, cache):
+def _(node: _df.Scope, g: gv.Digraph, ctx):
     this = get_node_name(node)
-    if check_cache(cache, this):
+    if ctx.check_cache(this):
         g.node(this, label=f"{node.__class__.__name__}", shape='rect')
 
         items = node.items()
-        render_items(this, items, g, cache)
+        render_items(this, items, g, ctx)
 
 
-def render_items(this, items, g, cache):
+def render_items(this, items, g, ctx):
     for k, v in items:
         if not isinstance(v, _dt.DataType):
-            gv_node(v, g, cache)
-            g.edge(this, get_node_name(v), taillabel=gv.escape(str(k)))
+            gv_node(v, g, ctx)
+            ctx.add_edge(this, get_node_name(v), taillabel=gv.escape(str(k)))
 
