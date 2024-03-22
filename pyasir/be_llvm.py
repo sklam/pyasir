@@ -128,7 +128,7 @@ class LLVMBackend:
         if node in self.cache:
             res = self.cache[node]
         else:
-            print(node.dump_shorten())
+            # print(node.dump_shorten())
             data = emit_node(node, self)
             # print(f"emit {str(node)[:100]}")
             # print("-->", data.type)
@@ -194,6 +194,9 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
             be.builder.branch(bb_after)
             case_phis.append((be.builder.block, case_output))
 
+    print("------")
+    print(node.pred)
+    print(value.type)
     swt = be.builder.switch(value, bb_default)
     for case_val, bb_case in cases:
         swt.add_case(case_val, bb_case)
@@ -213,15 +216,23 @@ def _emit_node_ExprNode(node: _df.ExprNode, be: LLVMBackend):
 
 @emit_node.register(_df.CallNode)
 def _emit_node_CallNode(node: _df.CallNode, be: LLVMBackend):
+    from .typedefs.functions import CallOp
+
     args = [be.emit(v) for v in node.args]
     kwargs = {k: be.emit(v) for k, v in node.kwargs.items()}
-    funcdef: _df.FuncDef = node.func.build_node()
-    inner_be = _dc_replace(be, scope={}, cache={})
-    fn = inner_be.emit_funcdef(funcdef)
+    if isinstance(node.func, _df.FuncNode):
+        funcdef: _df.FuncDef = node.func.build_node()
+        inner_be = _dc_replace(be, scope={}, cache={})
+        fn = inner_be.emit_funcdef(funcdef)
 
-    scope = funcdef.bind_scope(args, kwargs)
-    res = be.builder.call(fn, scope.values())
-    return res
+        scope = funcdef.bind_scope(args, kwargs)
+        res = be.builder.call(fn, scope.values())
+        return res
+    elif isinstance(node.func, CallOp):
+        out = emit_llvm(node.func, be.builder, *args, **kwargs)
+        return out
+    else:
+        raise NotImplementedError
 
 
 @emit_node.register(_df.LiteralNode)
@@ -258,7 +269,7 @@ def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     be.builder.position_at_end(bb_loop)
 
     # phi and incoming
-    phis = {k: be.builder.phi(v.type) for k, v in incoming_values.items()}
+    phis = {k: be.builder.phi(v.type, name=f'phi.{k.name}') for k, v in incoming_values.items()}
     for phi, lv in zip(phis.values(), incoming_values.values()):
         phi.add_incoming(lv, bb_head)
 
@@ -294,7 +305,7 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
         )
         printf = ir.Function(module, fnty, "printf")
 
-    fmt = bytearray(fmtstring.encode())
+    fmt = bytearray((fmtstring + '\0').encode())
     fmt_type = ir.ArrayType(ir.IntType(8), len(fmt))
 
     name = module.get_unique_name("conststr")

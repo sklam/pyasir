@@ -49,6 +49,9 @@ class IntegerType(DataType):
 class Int64(IntegerType):
     bitwidth = 64
 
+    def zero_value(self):
+        return 0
+
 
 @eval_op.register
 def _(op: IntBinop, lhs, rhs):

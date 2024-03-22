@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import uuid
+import weakref
 from dataclasses import (
     dataclass,
     replace as _dc_replace,
     fields as _dc_fields,
 )
 from functools import partial, partialmethod, singledispatch
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Annotated, Union
 from inspect import signature, isgenerator, Signature
 from collections.abc import Mapping
 from pprint import PrettyPrinter, pprint
@@ -16,13 +16,15 @@ import pyasir
 from . import datatypes as _dt
 from . import typing as _tp
 from . import dialect  # reexport
-
+from .details import props as _props
 
 def _generic_binop(self, other, *, op):
     other = as_node(other)
     optrait = self.datatype.get_binop(op, self.datatype, other.datatype)
     return ExprNode(optrait.result_type, optrait, args=(self, other))
 
+
+ChildTypes = Union["DFNode", tuple["DFNode", ...]]
 
 
 _pprint_cache = {}
@@ -116,6 +118,26 @@ class DFNode:
         from .graphviz_backend import node_as_graphviz
         return node_as_graphviz(self)
 
+    def get_child_nodes(self) -> dict[str, ChildTypes]:
+
+        props = _props.get_properties(self.__class__)
+
+        fields = _dc_fields(self)
+        children = {}
+
+        for fd in fields:
+            obj = getattr(self, fd.name)
+            if isinstance(obj, DFNode):
+                children[fd.name] = obj
+
+            elif _props.NodeChildren in props.get(fd.name):
+                children[fd.name] = tuple(obj)
+
+        return children
+
+    def replace_child_nodes(self, repl: dict[str, ChildTypes]):
+        return _dc_replace(self, **repl)
+
 
 def node_replace_attrs(node: DFNode, **attrs):
     return _dc_replace(node, **attrs)
@@ -146,6 +168,10 @@ class ValueNode(DFNode):
     def __getattr__(self, attr: str):
         attrop = self.datatype.attribute_lookup(attr)
         return ExprNode(attrop.result_type, attrop, (self,))
+
+
+class DialectMixin(DFNode):
+    __slots__ = ()
 
 
 class Scope(Mapping):
@@ -347,7 +373,7 @@ class LoopNode(RegionNode):
 @dataclass(frozen=True)
 class CaseExprNode(ValueNode):
     pred: DFNode
-    cases: tuple[EnterNode, ...]
+    cases: _tp.Annotated[tuple[EnterNode, ...], _props.NodeChildren]
 
     def __post_init__(self):
         assert isinstance(self.cases, tuple)
@@ -365,7 +391,7 @@ class CaseNode(RegionNode):
 @custom_pprint
 @dataclass(frozen=True)
 class LoopExprNode(ValueNode):
-    parent: LoopNode
+    parent: RegionNode
     loopbody: ValueNode
     scope: Scope
 
@@ -398,7 +424,7 @@ class ExpandNode(ValueNode):
 @custom_pprint
 @dataclass(frozen=True, order=False)
 class PackNode(ValueNode):
-    values: tuple[ValueNode, ...]
+    values: _tp.Annotated[tuple[ValueNode, ...], _props.NodeChildren]
 
     @classmethod
     def make(cls, *values: ValueNode):
@@ -455,13 +481,19 @@ def as_node_kwargs(kwargs) -> dict[str, ValueNode]:
     return {k: as_node(v) for k, v in kwargs.items()}
 
 
-def _argnode_uuid():
-    return str(uuid.uuid4())
+
 
 @custom_pprint
 @dataclass(frozen=True)
 class ArgNode(ValueNode):
     name: str
+
+    pool = weakref.WeakKeyDictionary()
+    pool_naming = iter(range(2**64))
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.pool[self] = str(next(self.pool_naming))
 
     def __eq__(self, other):
         return id(self) == id(other)
@@ -470,13 +502,19 @@ class ArgNode(ValueNode):
         return hash(id(self))
 
     def __repr__(self):
-        return f"ArgNode({self.name!r} at {hex(id(self))})"
+        return f"ArgNode({self.name!r}, uid={self._uid()})"
+        # return f"ArgNode({self.name!r} at {hex(id(self))})"
+
+    def _uid(self) -> str:
+        return self.pool[self]
+
+
 
 @custom_pprint
 @dataclass(frozen=True)
 class ExprNode(ValueNode):
     op: _dt.OpTrait
-    args: tuple[ValueNode, ...]
+    args: Annotated[tuple[ValueNode, ...], _props.NodeChildren]
 
     def __hash__(self):
         return id(self)
@@ -485,7 +523,7 @@ class ExprNode(ValueNode):
 @dataclass(frozen=True)
 class CallNode(ValueNode):
     func: FuncNode
-    args: tuple
+    args: Annotated[tuple[ValueNode, ...], _props.NodeChildren]
     kwargs: dict
 
     @classmethod
