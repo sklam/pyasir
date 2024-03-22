@@ -20,23 +20,24 @@ def forloop(n: Int64) -> Int64:
 
 
 def test_forloop_once():
+    arg = 5
     traced = forloop.build_node()
     pprint(traced)
     # traced.to_graphviz().view()
-    res = interpret(traced, 5)
-    assert res == sum(range(5)) * 4
+    res = interpret(traced, arg)
+    expected = sum(range(arg)) * (arg - 1)
+    assert res == expected
 
 
     transformed = transform(traced)
     transformed.to_graphviz().view()
 
-    got = interpret(transformed, 5)
-    print("GOT", got, res)
+    res = interpret(transformed, arg)
+    assert res == expected
 
     jf = generate(transformed)
-    print(jf)
-    print("LLVM GOT", jf(5), res)
-
+    res = jf(arg)
+    assert res == expected
 
 if __name__ == "__main__":
     test_forloop_once()
