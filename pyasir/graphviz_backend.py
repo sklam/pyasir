@@ -52,19 +52,30 @@ def gv_node(node, g: gv.Digraph, ctx: Context):
 
 
 @gv_node.register
-def _(node: tuple, g: gv.Digraph, ctx):
-    this = get_node_name(node)
-    if ctx.check_cache(this):
-        g.node(this, label="tuple", shape='rect')
-        items = enumerate(node)
-        render_items(this, items, g, ctx)
-
-
-@gv_node.register
 def _(node: _df.DFNode, g: gv.Digraph, ctx):
     this = get_node_name(node)
     if ctx.check_cache(this):
-        if isinstance(node, _df.LiteralNode):
+        if isinstance(node, _df.CaseExprNode):
+            g.node(this, label=f"CaseExprNode", shape='rect')
+            items = enumerate(node.cases)
+            render_items(this, items, g, ctx)
+            return
+
+        elif isinstance(node, _df.PackNode):
+            g.node(this, label=f"PackNode", shape='rect')
+            items = enumerate(node.values)
+            render_items(this, items, g, ctx)
+            return
+
+        elif isinstance(node, _df.CallNode):
+            g.node(this, label=f"CallNode(func={node.func})", shape='rect')
+            items = enumerate(node.args)
+            render_items(this, items, g, ctx)
+            items = node.kwargs.items()
+            render_items(this, items, g, ctx)
+            return
+
+        elif isinstance(node, _df.LiteralNode):
             g.node(this, label=repr(node), shape='rect')
             return
 
@@ -92,7 +103,8 @@ def _(node: _df.DFNode, g: gv.Digraph, ctx):
                 sub_items = dict(items)
                 scope_item = sub_items.pop('scope')
                 render_items(this, [('scope', scope_item)], g, ctx)
-                with g.subgraph(name=f"cluster_{this}") as g:
+                with g.subgraph(name=f"cluster_{this}",
+                                graph_attr={'style': 'dashed'}) as g:
                     render_items(this, list(sub_items.items()), g, ctx)
             else:
                 render_items(this, items, g, ctx)
@@ -104,8 +116,11 @@ def _(node: _df.Scope, g: gv.Digraph, ctx):
     if ctx.check_cache(this):
         g.node(this, label=f"{node.__class__.__name__}", shape='rect')
 
-        items = node.items()
-        render_items(this, items, g, ctx)
+        items = list(node.items())
+        render_items(this, [(k.name, v) for k, v in items], g, ctx)
+
+        for argnode, argvalue in items:
+            ctx.add_edge(get_node_name(argnode), get_node_name(argvalue), style='dotted')
 
 
 def render_items(this, items, g, ctx):
