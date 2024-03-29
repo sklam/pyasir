@@ -166,7 +166,7 @@ def _emit_node_ArgNode(node: _df.ArgNode, be: LLVMBackend):
 def _emit_node_EnterNode(node: _df.EnterNode, be: LLVMBackend):
     assert node.scope is not None
     scope = {k: be.emit(v) for k, v in node.scope.items()}
-    return be.nested_call(node.node, scope)
+    return be.nested_call(node.body, scope)
 
 
 @emit_node.register(_df.CaseExprNode)
@@ -273,7 +273,7 @@ def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     for phi, lv in zip(phis.values(), incoming_values.values()):
         phi.add_incoming(lv, bb_head)
 
-    loopbody = be.do_loop(node.loopbody, scope=phis)
+    loopbody = be.do_loop(node.body, scope=phis)
     loop_pred = be.builder.extract_value(loopbody, 0)
     loop_values_packed = be.builder.extract_value(loopbody, 1)
     loop_values = [

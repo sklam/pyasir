@@ -170,8 +170,25 @@ class ValueNode(DFNode):
         return ExprNode(attrop.result_type, attrop, (self,))
 
 
-class DialectMixin(DFNode):
-    __slots__ = ()
+@custom_pprint
+@dataclass(frozen=True)
+class EnterNode(ValueNode):
+    region: RegionNode
+    body: DFNode
+    scope: Scope
+
+    def __post_init__(self):
+        assert isinstance(self.scope, Scope)
+
+    @classmethod
+    def make(cls, region, body, scope):
+        _sentry_scope(scope)
+        return cls(
+            datatype=body.datatype, region=region, body=body, scope=scope
+        )
+
+    def __hash__(self):
+        return id(self)
 
 
 class Scope(Mapping):
@@ -367,13 +384,13 @@ class LoopNode(RegionNode):
         scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
         pred, body = nodes
         loopbody = pack(pred, body)
-        return LoopExprNode(body.datatype, self, loopbody=loopbody, scope=scope)
+        return LoopExprNode(body.datatype, self, body=loopbody, scope=scope)
 
 @custom_pprint
 @dataclass(frozen=True)
 class CaseExprNode(ValueNode):
     pred: DFNode
-    cases: _tp.Annotated[tuple[EnterNode, ...], _props.NodeChildren]
+    cases: Annotated[tuple[EnterNode, ...], _props.NodeChildren]
 
     def __post_init__(self):
         assert isinstance(self.cases, tuple)
@@ -390,13 +407,11 @@ class CaseNode(RegionNode):
 
 @custom_pprint
 @dataclass(frozen=True)
-class LoopExprNode(ValueNode):
-    parent: RegionNode
-    loopbody: ValueNode
-    scope: Scope
+class LoopExprNode(EnterNode):
 
     def __hash__(self):
         return id(self)
+
 
 @custom_pprint
 @dataclass(frozen=True, order=False)
@@ -424,7 +439,7 @@ class ExpandNode(ValueNode):
 @custom_pprint
 @dataclass(frozen=True, order=False)
 class PackNode(ValueNode):
-    values: _tp.Annotated[tuple[ValueNode, ...], _props.NodeChildren]
+    values: Annotated[tuple[ValueNode, ...], _props.NodeChildren]
 
     @classmethod
     def make(cls, *values: ValueNode):
@@ -508,6 +523,9 @@ class ArgNode(ValueNode):
     def _uid(self) -> str:
         return self.pool[self]
 
+    def clone(self):
+        return ArgNode(self.datatype, self.name)
+
 
 
 @custom_pprint
@@ -538,25 +556,6 @@ class CallNode(ValueNode):
     def __hash__(self):
         return id(self)
 
-@custom_pprint
-@dataclass(frozen=True)
-class EnterNode(ValueNode):
-    region: RegionNode
-    node: DFNode
-    scope: Scope
-
-    def __post_init__(self):
-        assert isinstance(self.scope, Scope)
-
-    @classmethod
-    def make(cls, region, node, scope):
-        _sentry_scope(scope)
-        return cls(
-            datatype=node.datatype, region=region, node=node, scope=scope
-        )
-
-    def __hash__(self):
-        return id(self)
 
 
 def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):

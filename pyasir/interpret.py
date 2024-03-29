@@ -82,7 +82,7 @@ def _eval_node_LiteralNode(node: _df.LiteralNode, ctx: Context):
 @eval_node.register
 def _eval_node_EnterNode(node: _df.EnterNode, ctx: Context):
     scope = {k: ctx.eval(v) for k, v in node.scope.items()}
-    return ctx.nested_call(node.node, scope)
+    return ctx.nested_call(node.body, scope)
 
 
 @eval_node.register
@@ -122,7 +122,7 @@ def _eval_node_LoopExprNode(node: _df.LoopExprNode, ctx: Context):
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
     while True:
         # print('loop', {k.name: v.value for k, v in inner_scope.items()})
-        loopbody = ctx.do_loop(node.loopbody, scope=inner_scope)
+        loopbody = ctx.do_loop(node.body, scope=inner_scope)
         # print('    loopbody', loopbody)
         pred, values = loopbody.value
         if pred:
