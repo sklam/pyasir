@@ -54,7 +54,9 @@ class ForLoopNode(RegionNode):
             scope=scope
         )
 
+
 _dummy = lambda: None
+
 
 @custom_pprint
 @dataclass(frozen=True, order=False)
@@ -90,16 +92,14 @@ class ForLoopExprNode(ValueNode):
         from pprint import pprint
         print('-' * 80)
         pprint(self.scope)
-        iter_key, *other_keys = list(self.scope)
-        # Call iter() on the iterator
-        range_res = _df.call(forloop_iter, self.iterator)
+        iter_key, *_other_keys = list(self.scope)
 
         enter_loop_expr, repl_arg_map = lift(self.body)
         inner_scope_keys = list(repl_arg_map.values())
         # inner_scope_values = list(repl_arg_map.keys())
 
-        def while_loop_body(range_res, iter_key, inner_scope_keys, inner_scope_values):
-            rangeiter_ok, rangeiter_ind = _df.unpack(_df.call(advance, range_res))
+        def while_loop_body(range_key, iter_key, init_key, inner_scope_keys, inner_scope_values):
+            rangeiter_ok, rangeiter_ind = _df.unpack(_df.call(advance, range_key, init_key))
 
             inner_scope_raw = dict(zip(inner_scope_keys, inner_scope_values))
             inner_scope_raw[iter_key] = rangeiter_ind
@@ -113,19 +113,24 @@ class ForLoopExprNode(ValueNode):
                 _df.EnterNode.make(_df.CaseNode.make(False)(_dummy), bypass_loop_expr, inner_scope),
             )
             body_data = _df.CaseExprNode(self.datatype, rangeiter_ok, cases)
-            body_data = _df.pack(*_df.unpack(body_data), range_res)
+            body_data = _df.pack(*_df.unpack(body_data), range_key)
             return _df.pack(rangeiter_ok, body_data)
+
+        # Call iter() on the iterator
+        range_res = _df.call(forloop_iter, self.iterator)
 
         range_key = _df.ArgNode(range_res.datatype, "_forloop_iter")
         # expand the scope and update
         outer_scope_raw = {k: v for k, v in self.scope.items()}
         # update first argument's value
-        outer_scope_raw[next(iter(outer_scope_raw))] = _df.zeroinit(iter_key.datatype)
+        init_key = next(iter(outer_scope_raw))
+        outer_scope_raw[init_key] = _df.zeroinit(iter_key.datatype)
         _, *outer_other_keys = outer_scope_raw
+
         # insert the loop iterator
         outer_scope_raw[range_key] = range_res
 
-        loopbody = while_loop_body(range_key, list(inner_scope_keys)[0], list(inner_scope_keys)[1:], outer_other_keys)
+        loopbody = while_loop_body(range_key, list(inner_scope_keys)[0], init_key, list(inner_scope_keys)[1:], outer_other_keys)
         outer_scope = _df.Scope(outer_scope_raw)
 
         out = _df.LoopExprNode(loopbody.datatype.elements[1], self.region, body=loopbody, scope=outer_scope)
@@ -148,22 +153,25 @@ registry["py"] = PyDialect
 def _eval_node_ForLoopExprNode(node: ForLoopExprNode, ctx: Context):
     scope = node.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
-    scope_values = list(inner_scope.values())
-    iterator = scope_values[0].value
+    scope_values = Data(tuple(v.value for v in inner_scope.values()))
+    iterator = scope_values.value[0]
 
     loop_keys = list(inner_scope.keys())
 
+    init_ind = None
     while True:
-        ok, ind = advance(iterator)
+        ok, ind = advance(iterator, init_ind)
         if not ok:
+            scope_values = Data((ind, *scope_values.value[1:]))
             break
+        else:
+            init_ind = ind
+            loop_values = map(Data, [ind, *scope_values.value[1:]])
+            scope = dict(zip(loop_keys, loop_values))
+            packed_values = ctx.do_loop(node.body, scope=scope)
+            scope_values = packed_values
 
-        loop_values = [Data(ind), *scope_values[1:]]
-        scope = dict(zip(loop_keys, loop_values))
-        packed_values = ctx.do_loop(node.body, scope=scope)
-        scope_values = packed_values.value
-
-    return Data(tuple(scope_values))
+    return scope_values
 
 
 
@@ -172,14 +180,15 @@ def _eval_node_ForLoopExprNode(node: ForLoopExprNode, ctx: Context):
 
 from pyasir.typedefs.functions import CallOp, Function, RangeCallOp
 
-def advance(it: Iterable) -> tuple[bool, Any]:
+
+def advance(it: Iterable, init: Any) -> tuple[bool, Any]:
     if isinstance(it, _ForLoopIter):
-        return it.advance()
+        return it.advance(init)
     else:
         try:
             ind = next(it)
         except StopIteration:
-            return False, 5
+            return False, init
         else:
             return True, ind
 
@@ -187,15 +196,13 @@ def advance(it: Iterable) -> tuple[bool, Any]:
 class _ForLoopIter:
     def __init__(self, it):
         self._it = iter(it)
-        self._last = None
 
-    def advance(self):
+    def advance(self, init):
         try:
             ind = next(self._it)
         except StopIteration:
-            return False, self._last
+            return False, init
         else:
-            self._last = ind
             return True, ind
 
 
@@ -227,9 +234,10 @@ class AdvanceFunction(Function):
     function = advance
 
     def get_call(self, args, kwargs):
-        [arg] = args
-        assert isinstance(arg.datatype, _tys.Int64Iterator), arg.datatype
-        restype = _tys.Packed[_tys.Bool, arg.datatype.element]()
+        [iterator, init] = args
+        assert isinstance(iterator.datatype, _tys.Int64Iterator), iterator.datatype
+        assert iterator.datatype.element == init.datatype
+        restype = _tys.Packed[_tys.Bool, iterator.datatype.element]()
         return IterAdvanceCallOp(result_type=restype, function=advance)
 
 
@@ -268,7 +276,8 @@ def _(op: ForLoopIterCallOp, builder: ir.IRBuilder, range_obj: ir.Value):
 
 
 @emit_llvm.register
-def _(op: IterAdvanceCallOp, builder: ir.IRBuilder, range_ptr: ir.Value):
+def _(op: IterAdvanceCallOp, builder: ir.IRBuilder, range_ptr: ir.Value, init_ind: ir.Value):
+    # TODO: Non-unit step is not implemented yet.
     keys = ['start', 'stop', 'step']
     field_ptrs = {}
     intty = ir.IntType(32)
@@ -284,8 +293,8 @@ def _(op: IterAdvanceCallOp, builder: ir.IRBuilder, range_ptr: ir.Value):
     ok = builder.icmp_signed("<", ind, stop, name='ok')
     last_ind = builder.sub(ind, step, name='last_ind')
 
-    with builder.if_then(ok):
-        builder.store(next_ind, field_ptrs['start'])
+    new_start = builder.select(ok, next_ind, init_ind)
+    builder.store(new_start, field_ptrs['start'])
 
     out_struct = ir.LiteralStructType([ok.type, ind.type])(None)
     out_struct = builder.insert_value(out_struct, ok, 0)
