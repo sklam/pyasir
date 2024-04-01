@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import ChainMap
+import logging
 from typing import Any
 from dataclasses import dataclass, replace as _dc_replace
 from functools import singledispatch
@@ -20,6 +20,9 @@ from pyasir.dispatchables.be_llvm import (
 from pyasir.dispatchables.ctypes import emit_c_type
 
 
+_logger = logging.getLogger(__name__)
+
+
 def generate(funcdef: _df.FuncDef):
     mod = ir.Module()
     be = LLVMBackend(module=mod, scope={}, cache={})
@@ -35,14 +38,15 @@ def generate(funcdef: _df.FuncDef):
     pmb.populate(pm)
     llmod = llvm.parse_assembly(str(mod))
     pm.run(llmod)
-    print(llmod)
-
-    llvm.view_dot_graph(
-        llvm.get_function_cfg(llmod.get_function(fn.name)), view=True
-    )
+    dbginfo = {}
+    dbg_llvm_optimized = str(llmod)
+    dbginfo['dbg_llvm_optimized'] = dbg_llvm_optimized
+    _logger.debug("Optimized LLVM\n%s", dbg_llvm_optimized)
 
     tm = llvm.Target.from_default_triple().create_target_machine()
-    print(tm.emit_assembly(llmod))
+    dbg_asm = tm.emit_assembly(llmod)
+    dbginfo['dbg_asm'] = dbg_asm
+    _logger.debug("Assembly\n%s", dbg_asm)
 
     # bind
     jitlib = (
@@ -59,7 +63,14 @@ def generate(funcdef: _df.FuncDef):
 
     proto = CFUNCTYPE(c_retty, *c_argtys)
     ccall = proto(addr)
-    jf = JittedFunction(_resource=jitres, address=addr, ccall=ccall)
+    jf = JittedFunction(
+        _resource=jitres,
+        address=addr,
+        ccall=ccall,
+        llmod=llmod,
+        fname=fn.name,
+        dbginfo=dbginfo,
+    )
     return jf
 
 
@@ -68,9 +79,19 @@ class JittedFunction:
     _resource: llvm.ResourceTracker
     address: int
     ccall: callable
+    llmod: llvm.ModuleRef
+    fname: str
+    dbginfo: dict[str, Any]
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.ccall(*args, **kwargs)
+
+    def get_cfg(self):
+        llmod = self.llmod
+        g = llvm.view_dot_graph(
+            llvm.get_function_cfg(llmod.get_function(self.fname))
+        )
+        return g
 
 
 def make_llvm_jit(mod: ir.Module):

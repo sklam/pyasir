@@ -87,7 +87,7 @@ class ForLoopExprNode(ValueNode):
 
 
 
-    def dialect_transform(self):
+    def dialect_lower(self):
 
         from pprint import pprint
         print('-' * 80)
@@ -300,6 +300,4 @@ def _(op: IterAdvanceCallOp, builder: ir.IRBuilder, range_ptr: ir.Value, init_in
     out_struct = builder.insert_value(out_struct, ok, 0)
     out_struct = builder.insert_value(out_struct, builder.select(ok, ind, last_ind), 1)
 
-    # from pyasir.be_llvm import _printf
-    # _printf(builder, "ind %zd next_ind %zd %d\n", ind, next_ind, ok)
     return out_struct

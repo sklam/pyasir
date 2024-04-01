@@ -39,9 +39,9 @@ def lift(expr: _df.DFNode) -> tuple[_df.DFNode, dict[_df.ArgNode, _df.ArgNode]]:
     return result, arg_map
 
 
-def transform(root: _df.FuncDef):
+def dialect_lower(root: _df.FuncDef):
     def transformer(node: _df.DFNode):
-        transform = getattr(node, "dialect_transform", None)
+        transform = getattr(node, "dialect_lower", None)
         if transform is None:
             return None
         return transform()

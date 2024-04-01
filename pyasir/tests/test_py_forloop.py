@@ -3,7 +3,7 @@ from pyasir import Int64
 from pyasir.interpret import interpret
 from pyasir.be_llvm import generate
 from pprint import pprint
-from pyasir.dialects.transforms import transform
+from pyasir.dialects.transforms import dialect_lower
 
 
 @pir.func
@@ -29,8 +29,8 @@ def test_forloop_once():
     assert res == expected
 
 
-    transformed = transform(traced)
-    transformed.to_graphviz().view()
+    transformed = dialect_lower(traced)
+    # transformed.to_graphviz().view()
 
     res = interpret(transformed, arg)
     assert res == expected
