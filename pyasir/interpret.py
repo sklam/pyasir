@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 from functools import singledispatch
 from pprint import pformat
+from pyasir.misc.lazylogger import LazyRepr
 
 from . import nodes as _df
 from .dispatchables.interpret import eval_op
+
+
+_logger = logging.getLogger(__name__)
 
 
 def interpret(funcdef: _df.FuncDef, *args: Any, **kwargs: Any) -> Any:
@@ -120,10 +125,13 @@ def _eval_node_UnpackNode(node: _df.UnpackNode, ctx: Context):
 def _eval_node_LoopExprNode(node: _df.LoopExprNode, ctx: Context):
     scope = node.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
+
     while True:
-        # print('loop', {k.name: v.value for k, v in inner_scope.items()})
+        _logger.debug("LoopExprNode %s",
+                      LazyRepr(lambda: {k.name: v.value
+                                        for k, v in inner_scope.items()}))
         loopbody = ctx.do_loop(node.body, scope=inner_scope)
-        # print('    loopbody', loopbody)
+        _logger.debug('    post-loop: %s', loopbody)
         pred, values = loopbody.value
         if pred:
             inner_scope = dict(zip(scope.keys(), map(Data, values)))
