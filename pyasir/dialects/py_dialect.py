@@ -48,10 +48,8 @@ class ForLoopNode(RegionNode):
 
         return ForLoopExprNode(
             loopbody.datatype,
-            region=self,
             iterator=args[0],
-            body=loopbody,
-            scope=scope
+            body=EnterNode.make(loopbody, scope),
         )
 
 
@@ -61,10 +59,8 @@ _dummy = lambda: None
 @custom_pprint
 @dataclass(frozen=True, order=False)
 class ForLoopExprNode(ValueNode):
-    region: ForLoopNode
     iterator: ValueNode
-    body: ValueNode
-    scope: Scope
+    body: EnterNode
 
     def __hash__(self):
         return id(self)
@@ -88,13 +84,11 @@ class ForLoopExprNode(ValueNode):
 
 
     def dialect_lower(self):
+        scope = self.body.scope
+        body =self.body.body
+        iter_key, *_other_keys = list(scope)
 
-        from pprint import pprint
-        print('-' * 80)
-        pprint(self.scope)
-        iter_key, *_other_keys = list(self.scope)
-
-        enter_loop_expr, repl_arg_map = lift(self.body)
+        enter_loop_expr, repl_arg_map = lift(body)
         inner_scope_keys = list(repl_arg_map.values())
         # inner_scope_values = list(repl_arg_map.keys())
 
@@ -120,7 +114,7 @@ class ForLoopExprNode(ValueNode):
 
         range_key = _df.ArgNode(range_res.datatype, "_forloop_iter")
         # expand the scope and update
-        outer_scope_raw = {k: v for k, v in self.scope.items()}
+        outer_scope_raw = {k: v for k, v in scope.items()}
         # update first argument's value
         init_key = next(iter(outer_scope_raw))
         outer_scope_raw[init_key] = _df.zeroinit(iter_key.datatype)
@@ -132,7 +126,7 @@ class ForLoopExprNode(ValueNode):
         loopbody = while_loop_body(range_key, list(inner_scope_keys)[0], init_key, list(inner_scope_keys)[1:], outer_other_keys)
         outer_scope = _df.Scope(outer_scope_raw)
 
-        out = _df.LoopExprNode(loopbody.datatype.elements[1], body=loopbody, scope=outer_scope)
+        out = _df.LoopExprNode(loopbody.datatype.elements[1], body=EnterNode.make(loopbody, scope=outer_scope))
 
         # clean up iterator
         *other, iterator = _df.unpack(out)
@@ -150,7 +144,7 @@ registry["py"] = PyDialect
 
 @eval_node.register
 def _eval_node_ForLoopExprNode(node: ForLoopExprNode, ctx: Context):
-    scope = node.scope
+    scope = node.body.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
     scope_values = Data(tuple(v.value for v in inner_scope.values()))
     iterator = scope_values.value[0]
@@ -167,7 +161,7 @@ def _eval_node_ForLoopExprNode(node: ForLoopExprNode, ctx: Context):
             init_ind = ind
             loop_values = map(Data, [ind, *scope_values.value[1:]])
             scope = dict(zip(loop_keys, loop_values))
-            packed_values = ctx.do_loop(node.body, scope=scope)
+            packed_values = ctx.nested_call(node.body.body, scope=scope)
             scope_values = packed_values
 
     return scope_values

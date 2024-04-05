@@ -165,12 +165,6 @@ class LLVMBackend:
         nested = _dc_replace(self, scope=scope, cache={})
         return nested.emit(node)
 
-    def do_loop(
-        self, values: _df.DFNode, scope: dict[_df.ArgNode, ir.Value]
-    ) -> ir.Value:
-        nested = _dc_replace(self, scope=scope, cache={})
-        return nested.emit(values)
-
 
 @singledispatch
 def emit_node(node: _df.DFNode, be: LLVMBackend):
@@ -279,7 +273,7 @@ def _emit_node_UnpackNode(node: _df.UnpackNode, be: LLVMBackend):
 
 @emit_node.register
 def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
-    scope = node.scope
+    scope = node.body.scope
 
     bb_head = be.builder.basic_block
     incoming_values = {k: be.emit(v) for k, v in scope.items()}
@@ -294,7 +288,7 @@ def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     for phi, lv in zip(phis.values(), incoming_values.values()):
         phi.add_incoming(lv, bb_head)
 
-    loopbody = be.do_loop(node.body, scope=phis)
+    loopbody = be.nested_call(node.body.body, scope=phis)
     loop_pred = be.builder.extract_value(loopbody, 0)
     loop_values_packed = be.builder.extract_value(loopbody, 1)
     loop_values = [

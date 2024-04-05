@@ -383,7 +383,8 @@ class LoopNode(RegionNode):
         scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
         pred, body = nodes
         loopbody = pack(pred, body)
-        return LoopExprNode(body.datatype, body=loopbody, scope=scope)
+        return LoopExprNode(body.datatype,
+                            body=EnterNode.make(loopbody, scope))
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -409,9 +410,11 @@ class CaseNode(RegionNode):
     def make(cls, case_pred: Any):
         return lambda fn: CaseNode(as_node(case_pred), fn)
 
+
 @custom_pprint
 @dataclass(frozen=True)
-class LoopExprNode(EnterNode):
+class LoopExprNode(ValueNode):
+    body: EnterNode
 
     def __hash__(self):
         return id(self)

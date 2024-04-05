@@ -61,10 +61,6 @@ class Context:
         nested = Context(scope=scope, cache={})
         return nested.eval(node)
 
-    def do_loop(self, body_value: _df.DFNode, scope: dict[str, Any]) -> Data:
-        nested = Context(scope=scope, cache={})
-        return nested.eval(body_value)
-
 
 @singledispatch
 def eval_node(node: _df.DFNode, ctx: Context):
@@ -123,14 +119,14 @@ def _eval_node_UnpackNode(node: _df.UnpackNode, ctx: Context):
 
 @eval_node.register
 def _eval_node_LoopExprNode(node: _df.LoopExprNode, ctx: Context):
-    scope = node.scope
+    scope = node.body.scope
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
 
     while True:
         _logger.debug("LoopExprNode %s",
                       LazyRepr(lambda: {k.name: v.value
                                         for k, v in inner_scope.items()}))
-        loopbody = ctx.do_loop(node.body, scope=inner_scope)
+        loopbody = ctx.nested_call(node.body.body, scope=inner_scope)
         _logger.debug('    post-loop: %s', loopbody)
         pred, values = loopbody.value
         if pred:
