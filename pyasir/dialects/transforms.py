@@ -7,36 +7,25 @@ from typing import Any, Callable
 
 import pyasir.nodes as _df
 
+def lift_and_inline(expr: _df.EnterNode, args: _df.ValueNode):
+    assert isinstance(expr, _df.EnterNode)
+    lifted, argmap = lift(expr.body, expr.scope)
+    return _df.EnterNode.make(lifted, _df.Scope(dict(zip(argmap.values(), args, strict=True))))
 
 
-def lift(expr: _df.DFNode) -> tuple[_df.DFNode, dict[_df.ArgNode, _df.ArgNode]]:
-    """Lift expression to return a copy of the `expr` with all
-    argument node replaced with fresh ones.
-
-    Returns
-    -------
-    (result, arg_map)
-        result: The lifted nodes
-        arg_map: Mapping from old ArgNode to new ArgNode.
-    """
-    new_args = []
-    arg_map = {}
+def lift(expr: _df.DFNode, old_scope: _df.Scope):
+    arg_map = {k: k.clone() for k in old_scope}
 
     def transformer(node: _df.DFNode):
         if isinstance(node, _df.ArgNode):
-            repl: _df.ArgNode = arg_map.get(node)
-            assert repl is not node
-            if repl is None:
-                repl = node.clone()
-                new_args.append(repl)
-                arg_map[node] = repl
-            return repl
+            return arg_map[node]
         else:
             return None   # to descent
 
     ctx = TransformerContext(transformer=transformer)
     result = transform_visitor(expr, ctx)
     return result, arg_map
+
 
 
 def dialect_lower(root: _df.FuncDef):

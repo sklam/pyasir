@@ -24,7 +24,7 @@ from .registry import registry
 from pyasir.interpret import eval_node, Context, Data
 from pyasir.nodes import custom_pprint
 from pyasir.dispatchables.be_llvm import emit_llvm
-from pyasir.dialects.transforms import lift
+from pyasir.dialects.transforms import lift, lift_and_inline
 
 PyDialect = SimpleNamespace()
 
@@ -65,71 +65,29 @@ class ForLoopExprNode(ValueNode):
     def __hash__(self):
         return id(self)
 
-
-    # def transform(self):
-    #     # @_df.loop.template
-    #     # def loop(range_res, iter_key, *args):
-    #     #     rangeiter_ok, rangeiter_ind = _df.unpack(_df.call(advance, range_res))
-
-    #     @_df.switch_template
-    #     def switch(*args):
-    #         loop = _df.case_template(1)(enter_loop_expr)
-
-    #         @_df.case_template(0)
-    #         def bypass(*args):
-    #             return _df.pack(*args)
-    #         yield loop
-    #         yield bypass
-
-
-
     def dialect_lower(self):
-        scope = self.body.scope
-        body =self.body.body
-        iter_key, *_other_keys = list(scope)
-
-        enter_loop_expr, repl_arg_map = lift(body)
-        inner_scope_keys = list(repl_arg_map.values())
-        # inner_scope_values = list(repl_arg_map.keys())
-
-        def while_loop_body(range_key, iter_key, init_key, inner_scope_keys, inner_scope_values):
-            rangeiter_ok, rangeiter_ind = _df.unpack(_df.call(advance, range_key, init_key))
-
-            inner_scope_raw = dict(zip(inner_scope_keys, inner_scope_values))
-            inner_scope_raw[iter_key] = rangeiter_ind
-            inner_scope = _df.Scope(inner_scope_raw)
-
-            bypass_loop_expr = _df.pack(*inner_scope.keys())
-
-            cases = (
-                _df.EnterNode.make(enter_loop_expr, inner_scope),
-                _df.EnterNode.make(bypass_loop_expr, inner_scope),
-            )
-            body_data = _df.CaseExprNode(self.datatype, rangeiter_ok, cases, _df.as_node_args((True, False)))
-            body_data = _df.pack(*_df.unpack(body_data), range_key)
+        @_df.LoopExprNode.template
+        def new_loop(iterator, indvar_init, *args):
+            rangeiter_ok, rangeiter_ind = _df.unpack(_df.call(advance, iterator, indvar_init))
+            @_df.CaseExprNode.template(rangeiter_ok)
+            def cases(rangeiter_ind, *args):
+                case1 = lift_and_inline(self.body, (rangeiter_ind, *args))
+                yield (True, case1)
+                case0 = _df.pack(rangeiter_ind, *args)
+                yield (False, case0)
+            ind, *other = _df.unpack(cases(rangeiter_ind, *args))
+            body_data = _df.pack(iterator, ind, *other)
             return _df.pack(rangeiter_ok, body_data)
 
-        # Call iter() on the iterator
         range_res = _df.call(forloop_iter, self.iterator)
-
-        range_key = _df.ArgNode(range_res.datatype, "_forloop_iter")
-        # expand the scope and update
-        outer_scope_raw = {k: v for k, v in scope.items()}
-        # update first argument's value
-        init_key = next(iter(outer_scope_raw))
-        outer_scope_raw[init_key] = _df.zeroinit(iter_key.datatype)
-        _, *outer_other_keys = outer_scope_raw
-
-        # insert the loop iterator
-        outer_scope_raw[range_key] = range_res
-
-        loopbody = while_loop_body(range_key, list(inner_scope_keys)[0], init_key, list(inner_scope_keys)[1:], outer_other_keys)
-        outer_scope = _df.Scope(outer_scope_raw)
-
-        out = _df.LoopExprNode(loopbody.datatype.elements[1], body=EnterNode.make(loopbody, scope=outer_scope))
+        scope = self.body.scope
+        args = list(scope.values())
+        out = new_loop(range_res, _df.zeroinit(args[0].datatype), *args[1:])
+        from pprint import pprint
+        pprint(out)
 
         # clean up iterator
-        *other, iterator = _df.unpack(out)
+        _iterator, *other = _df.unpack(out)
         return _df.pack(*other)
 
 

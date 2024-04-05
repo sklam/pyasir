@@ -138,6 +138,26 @@ class DFNode:
     def replace_child_nodes(self, repl: dict[str, ChildTypes]):
         return _dc_replace(self, **repl)
 
+    def get_arg_nodes(self) -> set["ArgNode"]:
+        """Recursively walk the node-tree to extract all ArgNode into a set.
+        """
+        argnodes = set()
+        done = set()
+        todos = [self]
+        while todos:
+            cur = todos.pop()
+            if cur in done:
+                continue
+            done.add(cur)
+            if isinstance(cur, ArgNode):
+                argnodes.add(cur)
+            for child in cur.get_child_nodes().values():
+                if isinstance(child, tuple):
+                    todos.extend(child)
+                else:
+                    todos.append(child)
+        return argnodes
+
 
 def node_replace_attrs(node: DFNode, **attrs):
     return _dc_replace(node, **attrs)
@@ -187,6 +207,11 @@ class EnterNode(ValueNode):
     def __hash__(self):
         return id(self)
 
+    def verify(self):
+        scope = self.scope
+        for argnode in self.get_arg_nodes():
+            assert argnode in scope
+
 
 class Scope(Mapping):
     _values: dict[ArgNode, ValueNode]
@@ -218,8 +243,8 @@ PrettyPrinter._dispatch[Scope.__repr__] = _pprint_Scope
 
 class ArgBinder:
     __sig: Signature
-    __argnodes: dict[str, ArgNode]
-    __valnodes: dict[str, ValueNode]
+    __argnodes: tuple[ArgNode, ...]
+    __valnodes: dict[ArgNode, ValueNode]
 
     def __init__(self, sig_or_func):
         if isinstance(sig_or_func, Signature):
@@ -230,23 +255,33 @@ class ArgBinder:
 
     def bind_to_datatypes(self, args, kwargs):
         ba = self.__sig.bind(*args, **kwargs)
-        self.__argnodes = {
-            k: ArgNode(dt, name=k) for k, dt in ba.arguments.items()
-        }
+        self.__argnodes = tuple(ArgNode(dt, name=k) for k, dt in ba.arguments.items())
 
     def bind_to_valuenodes(self, args, kwargs):
         ba = self.__sig.bind(*args, **kwargs)
-        self.__valnodes = ba.arguments
-        self.__argnodes = {
-            k: ArgNode(vn.datatype, name=k) for k, vn in ba.arguments.items()
-        }
+        self.__valnodes = {}
+        argnodes = []
 
-    def get_scope(self):
-        argnodes = self.__argnodes
-        return Scope({argnodes[k]: vn for k, vn in self.__valnodes.items()})
+        for k, pinfo in self.__sig.parameters.items():
+            assert pinfo.kind != pinfo.VAR_KEYWORD
+            vn = ba.arguments[k]
+            if pinfo.kind == pinfo.VAR_POSITIONAL:
+                for i, v in enumerate(vn):
+                    an = ArgNode(v.datatype, name=f"{k}.{i}")
+                    argnodes.append(an)
+                    self.__valnodes[an] = v
+            else:
+                an = ArgNode(vn.datatype, name=k)
+                argnodes.append(an)
+                self.__valnodes[an] = vn
+        self.__argnodes = argnodes
 
-    def get_argnodes(self):
+    def get_scope(self) -> Scope:
+        return Scope(self.__valnodes)
+
+    def get_argnodes(self) -> tuple[ArgNode, ...]:
         return self.__argnodes
+
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -261,10 +296,10 @@ class RegionNode(DFNode):
     ) -> tuple[Scope, ValueNode | Iterable[ValueNode]]:
         ab = ArgBinder(region_func)
         ab.bind_to_valuenodes(args, kwargs)
-        arguments = ab.get_argnodes()
+        args = ab.get_argnodes()
         scope = ab.get_scope()
 
-        res = region_func(**arguments)
+        res = region_func(*args)
         if not isgenerator(res):
             res = as_node(res)
         return scope, res
@@ -274,19 +309,19 @@ class RegionNode(DFNode):
     ) -> tuple[Scope, ValueNode | Iterable[ValueNode]]:
         ab = ArgBinder(region_func)
         ab.bind_to_valuenodes(args, kwargs)
-        arguments = ab.get_argnodes()
+        args = ab.get_argnodes()
         scope = ab.get_scope()
 
-        res = region_func(**arguments)
+        res = region_func(*args)
         return scope, res
 
 
 def _call_func_no_post(func, argtys):
     ab = ArgBinder(func)
     ab.bind_to_datatypes(argtys, {})
-    argnodes = ab.get_argnodes()
-    res = func(**argnodes)
-    return tuple(argnodes.values()), res
+    args = ab.get_argnodes()
+    res = func(*args)
+    return args, res
 
 
 def _call_func(func, argtys):
@@ -403,6 +438,22 @@ class CaseExprNode(ValueNode):
         for p in self.case_predicates:
             assert isinstance(p, LiteralNode)
 
+    @classmethod
+    def template(cls, pred):
+        def wrap(func):
+            def inner(*args):
+                scope, case_gen = RegionNode()._call_region(func, args, {})
+                case_predicates, case_exprs = zip(*case_gen)
+                return CaseExprNode(case_exprs[0].datatype,
+                                    pred=pred,
+                                    cases=tuple(EnterNode.make(expr, scope)
+                                                for expr in case_exprs),
+                                    case_predicates=as_node_args(case_predicates))
+
+            return inner
+        return wrap
+
+
 @custom_pprint
 @dataclass(frozen=True)
 class CaseNode(RegionNode):
@@ -421,6 +472,14 @@ class LoopExprNode(ValueNode):
 
     def __hash__(self):
         return id(self)
+
+    @classmethod
+    def template(cls, func):
+        def inner(*args):
+            scope, expr = RegionNode()._call_region(func, args, {})
+            return LoopExprNode(expr.datatype.elements[1], body=EnterNode.make(expr, scope))
+
+        return inner
 
 
 @custom_pprint
@@ -602,4 +661,5 @@ def call(__func: Callable, *args, **kwargs) -> DFNode:
 def zeroinit(ty: _dt.DataType) -> DFNode:
     op = ty.get_zero()
     return ExprNode(op.result_type, op, args=())
+
 
