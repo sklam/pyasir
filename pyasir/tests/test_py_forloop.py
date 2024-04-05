@@ -28,7 +28,6 @@ def test_forloop_once():
     expected = sum(range(arg)) * (arg - 1)
     assert res == expected
 
-
     transformed = dialect_lower(traced)
     # transformed.to_graphviz().view()
 
@@ -38,6 +37,7 @@ def test_forloop_once():
     jf = generate(transformed)
     res = jf(arg)
     assert res == expected
+
 
 if __name__ == "__main__":
     test_forloop_once()

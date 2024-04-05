@@ -123,11 +123,12 @@ def _eval_node_LoopExprNode(node: _df.LoopExprNode, ctx: Context):
     inner_scope = {k: ctx.eval(v) for k, v in scope.items()}
 
     while True:
-        _logger.debug("LoopExprNode %s",
-                      LazyRepr(lambda: {k.name: v.value
-                                        for k, v in inner_scope.items()}))
+        _logger.debug(
+            "LoopExprNode %s",
+            LazyRepr(lambda: {k.name: v.value for k, v in inner_scope.items()}),
+        )
         loopbody = ctx.nested_call(node.body.body, scope=inner_scope)
-        _logger.debug('    post-loop: %s', loopbody)
+        _logger.debug("    post-loop: %s", loopbody)
         pred, values = loopbody.value
         if pred:
             inner_scope = dict(zip(scope.keys(), map(Data, values)))

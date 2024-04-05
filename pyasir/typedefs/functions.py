@@ -70,4 +70,3 @@ def eval_op_RangeCallOp(op: RangeCallOp, args: tuple[tuple, dict]):
     assert not kwargs, kwargs
     [stop] = args
     return iter(range(stop))
-

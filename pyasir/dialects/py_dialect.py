@@ -68,13 +68,17 @@ class ForLoopExprNode(ValueNode):
     def dialect_lower(self):
         @_df.LoopExprNode.template
         def new_loop(iterator, indvar_init, *args):
-            rangeiter_ok, rangeiter_ind = _df.unpack(_df.call(advance, iterator, indvar_init))
+            rangeiter_ok, rangeiter_ind = _df.unpack(
+                _df.call(advance, iterator, indvar_init)
+            )
+
             @_df.CaseExprNode.template(rangeiter_ok)
             def cases(rangeiter_ind, *args):
                 case1 = lift_and_inline(self.body, (rangeiter_ind, *args))
                 yield (True, case1)
                 case0 = _df.pack(rangeiter_ind, *args)
                 yield (False, case0)
+
             ind, *other = _df.unpack(cases(rangeiter_ind, *args))
             body_data = _df.pack(iterator, ind, *other)
             return _df.pack(rangeiter_ok, body_data)
@@ -83,8 +87,6 @@ class ForLoopExprNode(ValueNode):
         scope = self.body.scope
         args = list(scope.values())
         out = new_loop(range_res, _df.zeroinit(args[0].datatype), *args[1:])
-        from pprint import pprint
-        pprint(out)
 
         # clean up iterator
         _iterator, *other = _df.unpack(out)
@@ -123,7 +125,6 @@ def _eval_node_ForLoopExprNode(node: ForLoopExprNode, ctx: Context):
             scope_values = packed_values
 
     return scope_values
-
 
 
 # ------
@@ -165,6 +166,7 @@ def forloop_iter(it: Iterable) -> tuple[bool, Any]:
 class ForLoopIterCallOp(CallOp):
     pass
 
+
 @Function.register(forloop_iter)
 class ForLoopIterFunction(Function):
     function = forloop_iter
@@ -172,7 +174,9 @@ class ForLoopIterFunction(Function):
     def get_call(self, args, kwargs):
         [arg] = args
         assert isinstance(arg.datatype, _tys.Int64Iterator), arg.datatype
-        return ForLoopIterCallOp(result_type=arg.datatype, function=forloop_iter)
+        return ForLoopIterCallOp(
+            result_type=arg.datatype, function=forloop_iter
+        )
 
 
 @dataclass(frozen=True)
@@ -186,7 +190,9 @@ class AdvanceFunction(Function):
 
     def get_call(self, args, kwargs):
         [iterator, init] = args
-        assert isinstance(iterator.datatype, _tys.Int64Iterator), iterator.datatype
+        assert isinstance(
+            iterator.datatype, _tys.Int64Iterator
+        ), iterator.datatype
         assert iterator.datatype.element == init.datatype
         restype = _tys.Packed[_tys.Bool, iterator.datatype.element]()
         return IterAdvanceCallOp(result_type=restype, function=advance)
@@ -209,6 +215,7 @@ def _(op: ForLoopIterCallOp, args):
 
 from llvmlite import ir
 
+
 @emit_llvm.register
 def _(op: RangeCallOp, builder: ir.IRBuilder, n: ir.Value):
     i64 = ir.IntType(64)
@@ -217,6 +224,7 @@ def _(op: RangeCallOp, builder: ir.IRBuilder, n: ir.Value):
     st = builder.insert_value(st, n, 1)
     st = builder.insert_value(st, i64(1), 2)
     return st
+
 
 @emit_llvm.register
 def _(op: ForLoopIterCallOp, builder: ir.IRBuilder, range_obj: ir.Value):
@@ -227,28 +235,36 @@ def _(op: ForLoopIterCallOp, builder: ir.IRBuilder, range_obj: ir.Value):
 
 
 @emit_llvm.register
-def _(op: IterAdvanceCallOp, builder: ir.IRBuilder, range_ptr: ir.Value, init_ind: ir.Value):
+def _(
+    op: IterAdvanceCallOp,
+    builder: ir.IRBuilder,
+    range_ptr: ir.Value,
+    init_ind: ir.Value,
+):
     # TODO: Non-unit step is not implemented yet.
-    keys = ['start', 'stop', 'step']
+    keys = ["start", "stop", "step"]
     field_ptrs = {}
     intty = ir.IntType(32)
     for i, k in enumerate(keys):
-        field_ptrs[k] = x = builder.gep(range_ptr, [intty(0), intty(i)], inbounds=True,
-                                        name=f'ptr.{k}')
+        field_ptrs[k] = x = builder.gep(
+            range_ptr, [intty(0), intty(i)], inbounds=True, name=f"ptr.{k}"
+        )
 
-    ind = builder.load(field_ptrs['start'], name='ind')
-    stop = builder.load(field_ptrs['stop'], name='stop')
-    step = builder.load(field_ptrs['step'], name='step')
+    ind = builder.load(field_ptrs["start"], name="ind")
+    stop = builder.load(field_ptrs["stop"], name="stop")
+    step = builder.load(field_ptrs["step"], name="step")
 
-    next_ind = builder.add(ind, step, name='next_ind')
-    ok = builder.icmp_signed("<", ind, stop, name='ok')
-    last_ind = builder.sub(ind, step, name='last_ind')
+    next_ind = builder.add(ind, step, name="next_ind")
+    ok = builder.icmp_signed("<", ind, stop, name="ok")
+    last_ind = builder.sub(ind, step, name="last_ind")
 
     new_start = builder.select(ok, next_ind, init_ind)
-    builder.store(new_start, field_ptrs['start'])
+    builder.store(new_start, field_ptrs["start"])
 
     out_struct = ir.LiteralStructType([ok.type, ind.type])(None)
     out_struct = builder.insert_value(out_struct, ok, 0)
-    out_struct = builder.insert_value(out_struct, builder.select(ok, ind, last_ind), 1)
+    out_struct = builder.insert_value(
+        out_struct, builder.select(ok, ind, last_ind), 1
+    )
 
     return out_struct

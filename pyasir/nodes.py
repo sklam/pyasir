@@ -18,6 +18,7 @@ from . import typing as _tp
 from . import dialect  # reexport
 from .details import props as _props
 
+
 def _generic_binop(self, other, *, op):
     other = as_node(other)
     optrait = self.datatype.get_binop(op, self.datatype, other.datatype)
@@ -30,30 +31,39 @@ ChildTypes = Union["DFNode", tuple["DFNode", ...]]
 _pprint_cache = {}
 
 
-def _format_namespace_items(self: PrettyPrinter, items, stream, indent, allowance, context, level):
+def _format_namespace_items(
+    self: PrettyPrinter, items, stream, indent, allowance, context, level
+):
     # Adapted from builtin PrettyPrinter._format_namespace_items
     # to be more compact
     write = stream.write
-    write('\n' + ' ' * indent)
-    delimnl = ',\n' + ' ' * indent
+    write("\n" + " " * indent)
+    delimnl = ",\n" + " " * indent
     last_index = len(items) - 1
     for i, (key, ent) in enumerate(items):
         last = i == last_index
         write(key)
-        write('=')
+        write("=")
         if id(ent) in context:
             # Special-case representation of recursion to match standard
             # recursive dataclass repr.
             write(f"...[{hex(id(ent))}]")
         else:
-            self._format(ent, stream, indent + len(key) + 1,
-                            allowance if last else 1,
-                            context, level)
+            self._format(
+                ent,
+                stream,
+                indent + len(key) + 1,
+                allowance if last else 1,
+                context,
+                level,
+            )
 
             write(delimnl)
 
 
-def _pformat(self: PrettyPrinter, object, stream, indent, allowance, context, level):
+def _pformat(
+    self: PrettyPrinter, object, stream, indent, allowance, context, level
+):
     # Adapted from builtin PrettyPrinter._pprint_dataclass
     # to be more compact
     objid = id(object)
@@ -67,12 +77,17 @@ def _pformat(self: PrettyPrinter, object, stream, indent, allowance, context, le
     _pprint_cache[objid] = f"<@{ref} : {type(object).__name__}>"
     try:
         cls_name = object.__class__.__name__
-        indent += 2 #len(cls_name) + 1
-        items = [(f.name, getattr(object, f.name))
-                for f in _dc_fields(object) if f.repr]
-        stream.write(cls_name + f"@{ref}" + '(')
-        _format_namespace_items(self, items, stream, indent, allowance, context, level)
-        stream.write(')')
+        indent += 2  # len(cls_name) + 1
+        items = [
+            (f.name, getattr(object, f.name))
+            for f in _dc_fields(object)
+            if f.repr
+        ]
+        stream.write(cls_name + f"@{ref}" + "(")
+        _format_namespace_items(
+            self, items, stream, indent, allowance, context, level
+        )
+        stream.write(")")
     finally:
         if first:
             _pprint_cache.clear()
@@ -88,8 +103,7 @@ def _pprint_Scope(self, object, stream, indent, allowance, context, level):
     if length:
         items = [(k.name, v) for k, v in object.items()]
         _format_namespace_items(
-            self,
-            items, stream, indent, allowance + 1, context, level
+            self, items, stream, indent, allowance + 1, context, level
         )
     write("}")
 
@@ -102,7 +116,6 @@ def custom_pprint(cls):
 @custom_pprint
 @dataclass(frozen=True)
 class DFNode:
-
     def dump_shorten(self) -> str:
         fields = _dc_fields(self)
         buf = []
@@ -116,10 +129,10 @@ class DFNode:
 
     def to_graphviz(self):
         from .graphviz_backend import node_as_graphviz
+
         return node_as_graphviz(self)
 
     def get_child_nodes(self) -> dict[str, ChildTypes]:
-
         props = _props.get_properties(self.__class__)
 
         fields = _dc_fields(self)
@@ -139,8 +152,7 @@ class DFNode:
         return _dc_replace(self, **repl)
 
     def get_arg_nodes(self) -> set["ArgNode"]:
-        """Recursively walk the node-tree to extract all ArgNode into a set.
-        """
+        """Recursively walk the node-tree to extract all ArgNode into a set."""
         argnodes = set()
         done = set()
         todos = [self]
@@ -238,6 +250,7 @@ class Scope(Mapping):
     def names(self) -> Sequence[str]:
         return [k.name for k in self]
 
+
 PrettyPrinter._dispatch[Scope.__repr__] = _pprint_Scope
 
 
@@ -255,7 +268,9 @@ class ArgBinder:
 
     def bind_to_datatypes(self, args, kwargs):
         ba = self.__sig.bind(*args, **kwargs)
-        self.__argnodes = tuple(ArgNode(dt, name=k) for k, dt in ba.arguments.items())
+        self.__argnodes = tuple(
+            ArgNode(dt, name=k) for k, dt in ba.arguments.items()
+        )
 
     def bind_to_valuenodes(self, args, kwargs):
         ba = self.__sig.bind(*args, **kwargs)
@@ -327,6 +342,7 @@ def _call_func_no_post(func, argtys):
 def _call_func(func, argtys):
     argnodes, ret = _call_func_no_post(func, argtys)
     return argnodes, as_node(ret)
+
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -403,9 +419,14 @@ class SwitchNode(RegionNode):
                 raise _dt.TypeOpError(
                     f"incompatible type {n.datatype}; expect {nodes[0].datatype}"
                 )
-        out = CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes),
-                           case_predicates=tuple(cn.case_pred for cn in case_nodes))
+        out = CaseExprNode(
+            nodes[0].datatype,
+            self.pred_node,
+            tuple(nodes),
+            case_predicates=tuple(cn.case_pred for cn in case_nodes),
+        )
         return out
+
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -421,8 +442,8 @@ class LoopNode(RegionNode):
         scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
         pred, body = nodes
         loopbody = pack(pred, body)
-        return LoopExprNode(body.datatype,
-                            body=EnterNode.make(loopbody, scope))
+        return LoopExprNode(body.datatype, body=EnterNode.make(loopbody, scope))
+
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -444,13 +465,17 @@ class CaseExprNode(ValueNode):
             def inner(*args):
                 scope, case_gen = RegionNode()._call_region(func, args, {})
                 case_predicates, case_exprs = zip(*case_gen)
-                return CaseExprNode(case_exprs[0].datatype,
-                                    pred=pred,
-                                    cases=tuple(EnterNode.make(expr, scope)
-                                                for expr in case_exprs),
-                                    case_predicates=as_node_args(case_predicates))
+                return CaseExprNode(
+                    case_exprs[0].datatype,
+                    pred=pred,
+                    cases=tuple(
+                        EnterNode.make(expr, scope) for expr in case_exprs
+                    ),
+                    case_predicates=as_node_args(case_predicates),
+                )
 
             return inner
+
         return wrap
 
 
@@ -477,7 +502,9 @@ class LoopExprNode(ValueNode):
     def template(cls, func):
         def inner(*args):
             scope, expr = RegionNode()._call_region(func, args, {})
-            return LoopExprNode(expr.datatype.elements[1], body=EnterNode.make(expr, scope))
+            return LoopExprNode(
+                expr.datatype.elements[1], body=EnterNode.make(expr, scope)
+            )
 
         return inner
 
@@ -487,6 +514,7 @@ class LoopExprNode(ValueNode):
 class UnpackNode(ValueNode):
     producer: DFNode
     index: int
+
 
 @custom_pprint
 @dataclass(frozen=True, order=False)
@@ -504,6 +532,7 @@ class ExpandNode(ValueNode):
             for i, ty in enumerate(self.datatype.elements)
         ]
         return iter(unpacked)
+
 
 @custom_pprint
 @dataclass(frozen=True, order=False)
@@ -525,6 +554,7 @@ loop = LoopNode.make
 
 pack = PackNode.make
 unpack = ExpandNode.make
+
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -565,8 +595,6 @@ def as_node_kwargs(kwargs) -> dict[str, ValueNode]:
     return {k: as_node(v) for k, v in kwargs.items()}
 
 
-
-
 @custom_pprint
 @dataclass(frozen=True)
 class ArgNode(ValueNode):
@@ -596,7 +624,6 @@ class ArgNode(ValueNode):
         return ArgNode(self.datatype, self.name)
 
 
-
 @custom_pprint
 @dataclass(frozen=True)
 class ExprNode(ValueNode):
@@ -605,6 +632,7 @@ class ExprNode(ValueNode):
 
     def __hash__(self):
         return id(self)
+
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -624,7 +652,6 @@ class CallNode(ValueNode):
 
     def __hash__(self):
         return id(self)
-
 
 
 def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):
@@ -661,5 +688,3 @@ def call(__func: Callable, *args, **kwargs) -> DFNode:
 def zeroinit(ty: _dt.DataType) -> DFNode:
     op = ty.get_zero()
     return ExprNode(op.result_type, op, args=())
-
-

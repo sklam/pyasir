@@ -40,12 +40,12 @@ def generate(funcdef: _df.FuncDef):
     pm.run(llmod)
     dbginfo = {}
     dbg_llvm_optimized = str(llmod)
-    dbginfo['dbg_llvm_optimized'] = dbg_llvm_optimized
+    dbginfo["dbg_llvm_optimized"] = dbg_llvm_optimized
     _logger.debug("Optimized LLVM\n%s", dbg_llvm_optimized)
 
     tm = llvm.Target.from_default_triple().create_target_machine()
     dbg_asm = tm.emit_assembly(llmod)
-    dbginfo['dbg_asm'] = dbg_asm
+    dbginfo["dbg_asm"] = dbg_asm
     _logger.debug("Assembly\n%s", dbg_asm)
 
     # bind
@@ -200,9 +200,7 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
     cases = []
     case_phis = []
     for case, case_pred in zip(node.cases, node.case_predicates, strict=True):
-        bb_case = be.builder.append_basic_block(
-            f"case_{case_pred.py_value}"
-        )
+        bb_case = be.builder.append_basic_block(f"case_{case_pred.py_value}")
         cases.append((case_pred.py_value, bb_case))
         with be.builder.goto_block(bb_case):
             case_output = be.emit(case)
@@ -284,7 +282,10 @@ def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     be.builder.position_at_end(bb_loop)
 
     # phi and incoming
-    phis = {k: be.builder.phi(v.type, name=f'phi.{k.name}') for k, v in incoming_values.items()}
+    phis = {
+        k: be.builder.phi(v.type, name=f"phi.{k.name}")
+        for k, v in incoming_values.items()
+    }
     for phi, lv in zip(phis.values(), incoming_values.values()):
         phi.add_incoming(lv, bb_head)
 
@@ -320,7 +321,7 @@ def _printf(builder: ir.IRBuilder, fmtstring: str, *args: ir.Value):
         )
         printf = ir.Function(module, fnty, "printf")
 
-    fmt = bytearray((fmtstring + '\0').encode())
+    fmt = bytearray((fmtstring + "\0").encode())
     fmt_type = ir.ArrayType(ir.IntType(8), len(fmt))
 
     name = module.get_unique_name("conststr")

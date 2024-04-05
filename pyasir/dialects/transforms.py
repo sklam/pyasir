@@ -7,10 +7,13 @@ from typing import Any, Callable
 
 import pyasir.nodes as _df
 
+
 def lift_and_inline(expr: _df.EnterNode, args: _df.ValueNode):
     assert isinstance(expr, _df.EnterNode)
     lifted, argmap = lift(expr.body, expr.scope)
-    return _df.EnterNode.make(lifted, _df.Scope(dict(zip(argmap.values(), args, strict=True))))
+    return _df.EnterNode.make(
+        lifted, _df.Scope(dict(zip(argmap.values(), args, strict=True)))
+    )
 
 
 def lift(expr: _df.DFNode, old_scope: _df.Scope):
@@ -20,12 +23,11 @@ def lift(expr: _df.DFNode, old_scope: _df.Scope):
         if isinstance(node, _df.ArgNode):
             return arg_map[node]
         else:
-            return None   # to descent
+            return None  # to descent
 
     ctx = TransformerContext(transformer=transformer)
     result = transform_visitor(expr, ctx)
     return result, arg_map
-
 
 
 def dialect_lower(root: _df.FuncDef):
@@ -44,7 +46,6 @@ def dialect_lower(root: _df.FuncDef):
 class TransformerContext:
     transformer: Callable[[_df.DFNode], _df.DFNode | None]
     repl_cache: dict[int, Any] = field(default_factory=dict)
-
 
     def visit(self, node: _df.FuncDef):
         return transform_visitor(node, self)
@@ -71,6 +72,7 @@ def transform_visitor(node: object, ctx: TransformerContext):
 def _(node: tuple, ctx: TransformerContext):
     return tuple(transform_visitor(item, ctx) for item in node)
 
+
 @transform_visitor.register
 def _(node: _df.DFNode, ctx: TransformerContext):
     result = ctx.transformer(node)
@@ -82,4 +84,3 @@ def _(node: _df.DFNode, ctx: TransformerContext):
         return node.replace_child_nodes(repl)
     else:
         return result
-

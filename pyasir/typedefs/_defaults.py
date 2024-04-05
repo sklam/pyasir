@@ -12,7 +12,6 @@ def _(op: ZeroOpTrait, builder):
     return llty(None)
 
 
-
 @eval_op.register
 def _(op: ZeroOpTrait):
     return op.result_type.zero_value()

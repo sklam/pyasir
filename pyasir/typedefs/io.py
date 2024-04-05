@@ -69,7 +69,6 @@ class RAII:
         if expect is None:
             expect = lambda x: True
 
-
         # body
         state = self._state
 
