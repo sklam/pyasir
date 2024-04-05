@@ -7,7 +7,7 @@ from dataclasses import (
     fields as _dc_fields,
 )
 from functools import partial, partialmethod, singledispatch
-from typing import Any, Callable, Iterable, Annotated, Union
+from typing import Any, Callable, Iterable, Annotated, Union, Sequence
 from inspect import signature, isgenerator, Signature
 from collections.abc import Mapping
 from pprint import PrettyPrinter, pprint
@@ -209,6 +209,9 @@ class Scope(Mapping):
     def __len__(self):
         return len(self._values)
 
+    @property
+    def names(self) -> Sequence[str]:
+        return [k.name for k in self]
 
 PrettyPrinter._dispatch[Scope.__repr__] = _pprint_Scope
 

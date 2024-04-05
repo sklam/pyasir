@@ -102,7 +102,8 @@ def _(node: _df.DFNode, g: gv.Digraph, ctx):
             if isinstance(node, _df.EnterNode):
                 sub_items = dict(items)
                 scope_item = sub_items.pop('scope')
-                render_items(this, [('scope', scope_item)], g, ctx)
+                items = [('scope', scope_item)]
+                render_items(this, items, g, ctx)
                 with g.subgraph(name=f"cluster_{this}",
                                 graph_attr={'style': 'dashed'}) as g:
                     render_items(this, list(sub_items.items()), g, ctx)
@@ -114,12 +115,13 @@ def _(node: _df.DFNode, g: gv.Digraph, ctx):
 def _(node: _df.Scope, g: gv.Digraph, ctx):
     this = get_node_name(node)
     if ctx.check_cache(this):
-        g.node(this, label=f"{node.__class__.__name__}", shape='rect')
+        g.node(this, label=f"{node.__class__.__name__}|{'|'.join(node.names)}", shape='record')
 
         items = list(node.items())
-        render_items(this, [(k.name, v) for k, v in items], g, ctx)
+        render_items(this, [(k.name, k) for k, v in items], g, ctx)
 
         for argnode, argvalue in items:
+            gv_node(argvalue, g, ctx)
             ctx.add_edge(get_node_name(argnode), get_node_name(argvalue), style='dotted')
 
 
