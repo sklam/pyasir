@@ -98,8 +98,8 @@ def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     first_scope = first_case.scope
     for v_val in first_scope.values():
         ctx.eval(v_val)
-    for case in node.cases:
-        if pred == case.region.case_pred.py_value:
+    for case, case_pred in zip(node.cases, node.case_predicates, strict=True):
+        if pred == case_pred.py_value:
             return ctx.eval(case)
     raise AssertionError(f"no matching case for pred={pred}:\n{pformat(node)}")
 

@@ -105,14 +105,13 @@ class ForLoopExprNode(ValueNode):
             inner_scope_raw[iter_key] = rangeiter_ind
             inner_scope = _df.Scope(inner_scope_raw)
 
-
             bypass_loop_expr = _df.pack(*inner_scope.keys())
 
             cases = (
-                _df.EnterNode.make(_df.CaseNode.make(True)(_dummy), enter_loop_expr, inner_scope),
-                _df.EnterNode.make(_df.CaseNode.make(False)(_dummy), bypass_loop_expr, inner_scope),
+                _df.EnterNode.make(enter_loop_expr, inner_scope),
+                _df.EnterNode.make(bypass_loop_expr, inner_scope),
             )
-            body_data = _df.CaseExprNode(self.datatype, rangeiter_ok, cases)
+            body_data = _df.CaseExprNode(self.datatype, rangeiter_ok, cases, _df.as_node_args((True, False)))
             body_data = _df.pack(*_df.unpack(body_data), range_key)
             return _df.pack(rangeiter_ok, body_data)
 
@@ -133,7 +132,7 @@ class ForLoopExprNode(ValueNode):
         loopbody = while_loop_body(range_key, list(inner_scope_keys)[0], init_key, list(inner_scope_keys)[1:], outer_other_keys)
         outer_scope = _df.Scope(outer_scope_raw)
 
-        out = _df.LoopExprNode(loopbody.datatype.elements[1], self.region, body=loopbody, scope=outer_scope)
+        out = _df.LoopExprNode(loopbody.datatype.elements[1], body=loopbody, scope=outer_scope)
 
         # clean up iterator
         *other, iterator = _df.unpack(out)

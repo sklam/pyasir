@@ -205,11 +205,11 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
 
     cases = []
     case_phis = []
-    for case in node.cases:
+    for case, case_pred in zip(node.cases, node.case_predicates, strict=True):
         bb_case = be.builder.append_basic_block(
-            f"case_{case.region.case_pred.py_value}"
+            f"case_{case_pred.py_value}"
         )
-        cases.append((case.region.case_pred.py_value, bb_case))
+        cases.append((case_pred.py_value, bb_case))
         with be.builder.goto_block(bb_case):
             case_output = be.emit(case)
             be.builder.branch(bb_after)

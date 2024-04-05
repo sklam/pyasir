@@ -173,7 +173,6 @@ class ValueNode(DFNode):
 @custom_pprint
 @dataclass(frozen=True)
 class EnterNode(ValueNode):
-    region: RegionNode
     body: DFNode
     scope: Scope
 
@@ -181,11 +180,9 @@ class EnterNode(ValueNode):
         assert isinstance(self.scope, Scope)
 
     @classmethod
-    def make(cls, region, body, scope):
+    def make(cls, body, scope):
         _sentry_scope(scope)
-        return cls(
-            datatype=body.datatype, region=region, body=body, scope=scope
-        )
+        return cls(datatype=body.datatype, body=body, scope=scope)
 
     def __hash__(self):
         return id(self)
@@ -356,18 +353,20 @@ class SwitchNode(RegionNode):
         [args, kwargs] = self._pre_call(args, kwargs)
         case_nodes: Iterable[CaseNode]
         _scope, case_nodes = self._call_region(self.region_func, args, kwargs)
+        case_nodes = list(case_nodes)
         # Get case nodes
         nodes = []
         for cn in case_nodes:
             case_scope, case_res = self._call_region(cn.case_func, args, kwargs)
-            nodes.append(EnterNode.make(cn, case_res, scope=case_scope))
+            nodes.append(EnterNode.make(case_res, scope=case_scope))
 
         for n in nodes[1:]:
             if nodes[0].datatype != n.datatype:
                 raise _dt.TypeOpError(
                     f"incompatible type {n.datatype}; expect {nodes[0].datatype}"
                 )
-        out = CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes))
+        out = CaseExprNode(nodes[0].datatype, self.pred_node, tuple(nodes),
+                           case_predicates=tuple(cn.case_pred for cn in case_nodes))
         return out
 
 @custom_pprint
@@ -384,16 +383,21 @@ class LoopNode(RegionNode):
         scope, nodes = self._call_region_loop(self.region_func, args, kwargs)
         pred, body = nodes
         loopbody = pack(pred, body)
-        return LoopExprNode(body.datatype, self, body=loopbody, scope=scope)
+        return LoopExprNode(body.datatype, body=loopbody, scope=scope)
 
 @custom_pprint
 @dataclass(frozen=True)
 class CaseExprNode(ValueNode):
     pred: DFNode
     cases: Annotated[tuple[EnterNode, ...], _props.NodeChildren]
+    case_predicates: Annotated[tuple[LiteralNode, ...], _props.NodeChildren]
 
     def __post_init__(self):
         assert isinstance(self.cases, tuple)
+        assert isinstance(self.case_predicates, tuple)
+        assert len(self.cases) == len(self.case_predicates)
+        for p in self.case_predicates:
+            assert isinstance(p, LiteralNode)
 
 @custom_pprint
 @dataclass(frozen=True)
