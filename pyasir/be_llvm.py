@@ -93,6 +93,13 @@ class JittedFunction:
         )
         return g
 
+    def to_graphviz(self):
+        import graphviz as gv
+        llmod = self.llmod
+        cfg = llvm.get_function_cfg(llmod.get_function(self.fname))
+        return gv.Source(cfg)
+
+
 
 def make_llvm_jit(mod: ir.Module):
     llvm.initialize()
