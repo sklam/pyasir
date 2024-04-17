@@ -23,16 +23,16 @@ from pyasir.dispatchables.ctypes import emit_c_type
 _logger = logging.getLogger(__name__)
 
 
-def generate(funcdef: _df.FuncDef):
+def generate(funcdef: _df.FuncDef, optlevel=2):
     mod = ir.Module()
     be = LLVMBackend(module=mod, scope={}, cache={})
     fn = be.emit_funcdef(funcdef)
-    print(mod)
+    # print(mod)
     # Make a jit and bind to ctypes
     lljit = make_llvm_jit(mod)
     # optimize
     pmb = llvm.create_pass_manager_builder()
-    pmb.opt_level = 2
+    pmb.opt_level = optlevel
     pmb.inlining_threshold = 200
     pm = llvm.create_module_pass_manager()
     pmb.populate(pm)
