@@ -73,11 +73,12 @@ def testme(n: Int64) -> Int64:
 def test_testeme():
     traced = testme.build_node()
     pprint(traced)
-    traced.to_graphviz().view()
+    # traced.to_graphviz().view()
     got = interpret(traced, 8)
     print('got', got)
     jf = generate(traced)
     print('llvm', jf(8))
+    # jf.get_cfg().view()
 
 
 if __name__ == "__main__":

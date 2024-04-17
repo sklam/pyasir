@@ -214,9 +214,9 @@ def _emit_node_CaseExprNode(node: _df.CaseExprNode, be: LLVMBackend):
             be.builder.branch(bb_after)
             case_phis.append((be.builder.block, case_output))
 
-    print("------")
-    print(node.pred)
-    print(value.type)
+    # print("------")
+    # print(node.pred)
+    # print(value.type)
     swt = be.builder.switch(value, bb_default)
     for case_val, bb_case in cases:
         swt.add_case(case_val, bb_case)
