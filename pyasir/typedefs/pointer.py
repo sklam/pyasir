@@ -136,7 +136,9 @@ def eval_op_PointerLoad(op: PointerLoad, ptr):
     ct_result = emit_c_type(op.result_type)
     castedptr = ctypes.cast(ptr, ctypes.POINTER(ct_result))
     print("load", hex(ptr))
-    out = castedptr[0]
+    # prevent using a reference
+    out = ct_result.from_buffer_copy(ct_result.from_address(ptr))
+    print("  loaded", ' '.join([f"{b:02x}" for b in bytes(out)]))
     return out
 
 
