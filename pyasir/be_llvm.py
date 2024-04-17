@@ -273,8 +273,7 @@ def _emit_node_UnpackNode(node: _df.UnpackNode, be: LLVMBackend):
 def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     scope = node.body.scope
 
-    bb_head = be.builder.basic_block
-    incoming_values = {k: be.emit(v) for k, v in scope.items()}
+    incoming_values = {k: (be.emit(v), be.builder.block) for k, v in scope.items()}
 
     bb_loop = be.builder.append_basic_block("loop")
     bb_endloop = be.builder.append_basic_block("endloop")
@@ -284,10 +283,10 @@ def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     # phi and incoming
     phis = {
         k: be.builder.phi(v.type, name=f"phi.{k.name}")
-        for k, v in incoming_values.items()
+        for k, (v, bb) in incoming_values.items()
     }
-    for phi, lv in zip(phis.values(), incoming_values.values()):
-        phi.add_incoming(lv, bb_head)
+    for phi, (lv, bb) in zip(phis.values(), incoming_values.values()):
+        phi.add_incoming(lv, bb)
 
     loopbody = be.nested_call(node.body.body, scope=phis)
     loop_pred = be.builder.extract_value(loopbody, 0)
