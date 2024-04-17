@@ -72,6 +72,8 @@ def testme(n: Int64) -> Int64:
 
 def test_testeme():
     traced = testme.build_node()
+    pprint(traced)
+    traced.to_graphviz().view()
     got = interpret(traced, 8)
     print('got', got)
     jf = generate(traced)

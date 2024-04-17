@@ -79,18 +79,16 @@ class RAII:
         # manually build up a case expression
         # ok case
         ok_case_res = fn()
-        ok_case = _df.CaseNode(case_pred=_df.as_node(True), case_func=fn)
         enter_ok = _df.EnterNode.make(ok_case_res, scope=scope)
 
         # bad case
-        bad_case = _df.CaseNode(case_pred=_df.as_node(False), case_func=fn)
         bad_case_res = _df.zeroinit(enter_ok.datatype)
         enter_bad = _df.EnterNode.make(bad_case_res, scope=scope)
 
         assert bad_case_res.datatype == ok_case_res.datatype
 
         valexpr = _df.CaseExprNode(
-            ok_case_res.datatype, predicate, (enter_ok, enter_bad)
+            ok_case_res.datatype, predicate, (enter_ok, enter_bad), _df.as_node_args((True, False))
         )
 
         # epilog
