@@ -141,9 +141,8 @@ class DFNode:
 
         for fd in fields:
             obj = getattr(self, fd.name)
-            if isinstance(obj, DFNode):
+            if isinstance(obj, (DFNode, Scope)):
                 children[fd.name] = obj
-
             elif _props.NodeChildren in props.get(fd.name):
                 children[fd.name] = tuple(obj)
 

@@ -37,7 +37,7 @@ def dialect_lower(root: _df.FuncDef):
             return None
         return transform()
 
-    ctx = TransformerContext(transformer=transformer)
+    ctx = TransformerContext(transformer=transformer, recurse=True)
     result = ctx.visit(root)
     return result
 
@@ -45,21 +45,29 @@ def dialect_lower(root: _df.FuncDef):
 @dataclass(frozen=True)
 class TransformerContext:
     transformer: Callable[[_df.DFNode], _df.DFNode | None]
-    repl_cache: dict[int, Any] = field(default_factory=dict)
+    repl_cache: dict[Any, Any] = field(default_factory=dict)
+    recurse: bool = False
 
     def visit(self, node: _df.FuncDef):
         return transform_visitor(node, self)
 
     def visit_child(self, node: _df.DFNode, name: str, parent: _df.DFNode):
         print(f"--visit[{type(node)}] {type(parent)}.{name}")
-        key = id(node)
-        if key in self.repl_cache:
-            out = self.repl_cache[key]
+        if node in self.repl_cache:
+            out = self.repl_cache[node]
         else:
-            out = transform_visitor(node, self)
-            self.repl_cache[key] = out
-            if out is not node:
-                print("<-replaced", type(out))
+            old = node
+            while True:
+                out = transform_visitor(node, self)
+                if out != node:
+                    print("<-replaced", type(out))
+                    node = out
+                    if not self.recurse:
+                        break
+                else:
+                    out = node
+                    break
+            self.repl_cache[old] = out
         return out
 
 
@@ -79,8 +87,27 @@ def _(node: _df.DFNode, ctx: TransformerContext):
     if result is None:
         # Recursively apply to children
         repl = {}
+        repl_count = 0
         for name, child in node.get_child_nodes().items():
-            repl[name] = ctx.visit_child(child, name=name, parent=node)
-        return node.replace_child_nodes(repl)
+            repl[name] = new = ctx.visit_child(child, name=name, parent=node)
+            if child != new:
+                repl_count += 1
+        return node.replace_child_nodes(repl) if repl_count else node
+    else:
+        return result
+
+@transform_visitor.register
+def _(node: _df.Scope, ctx: TransformerContext):
+    result = ctx.transformer(node)
+    if result is None:
+        # Recursively apply to children
+        repl = {}
+        repl_count = 0
+        for k, v in node.items():
+            repl[k] = new = ctx.visit_child(v, name=k, parent=node)
+            if new is not v:
+                repl_count += 1
+
+        return _df.Scope(repl) if repl_count else node
     else:
         return result
