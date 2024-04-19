@@ -4,8 +4,12 @@ from dataclasses import dataclass, field
 from pprint import pprint
 from functools import singledispatch
 from typing import Any, Callable
+import logging
 
 import pyasir.nodes as _df
+
+
+_logger = logging.getLogger(__name__)
 
 
 def lift_and_inline(expr: _df.EnterNode, args: _df.ValueNode):
@@ -45,32 +49,69 @@ def dialect_lower(root: _df.FuncDef):
     return result
 
 
-@dataclass(frozen=True)
+@dataclass
 class TransformerContext:
     transformer: Callable[[_df.DFNode], _df.DFNode | None]
-    repl_cache: dict[Any, Any] = field(default_factory=dict)
+    """Transformer function to apply
+    """
     recurse: bool = False
+    """Recursively apply transformation
+    """
+    # Internal states
+    _memo: dict[Any, Any] = field(default_factory=dict)
+    """Memoize replacements
+    """
+    _run_depth: int = 0
+    """Run depth for debugging
+    """
+
+    def __post_init__(self):
+        _logger.debug("Transform %s @ %s", self, hex(id(self)))
 
     def visit(self, node: _df.FuncDef):
         return transform_visitor(node, self)
 
     def visit_child(self, node: _df.DFNode, name: str, parent: _df.DFNode):
-        print(f"--visit[{type(node)}] {type(parent)}.{name}")
-        if node in self.repl_cache:
-            out = self.repl_cache[node]
-        else:
-            old = node
-            while True:
-                out = transform_visitor(node, self)
-                if out != node:
-                    print("<-replaced", type(out))
-                    node = out
-                    if not self.recurse:
+        self._run_depth += 1
+        depth = self._run_depth
+        try:
+            _logger.debug(
+                "%s [%d] visit %s, parent %s, field %s",
+                hex(id(self)),
+                depth,
+                type(node).__name__,
+                type(parent).__name__,
+                name,
+            )
+            if node in self._memo:
+                out = self._memo[node]
+
+                _logger.debug(
+                    "%s [%d] ... (cache) replaced with %s",
+                    hex(id(self)),
+                    depth,
+                    type(out).__name__,
+                )
+            else:
+                old = node
+                while True:
+                    out = transform_visitor(node, self)
+                    if out != node:
+                        _logger.debug(
+                            "%s [%d] ... replaced with %s",
+                            hex(id(self)),
+                            depth,
+                            type(out).__name__,
+                        )
+                        node = out
+                        if not self.recurse:
+                            break
+                    else:
+                        out = node
                         break
-                else:
-                    out = node
-                    break
-            self.repl_cache[old] = out
+                self._memo[old] = out
+        finally:
+            self._run_depth -= 1
         return out
 
 
@@ -81,7 +122,10 @@ def transform_visitor(node: object, ctx: TransformerContext):
 
 @transform_visitor.register
 def _(node: tuple, ctx: TransformerContext):
-    return tuple(transform_visitor(item, ctx) for item in node)
+    return tuple(
+        ctx.visit_child(item, name=str(i), parent=node)
+        for i, item in enumerate(node)
+    )
 
 
 @transform_visitor.register
@@ -108,7 +152,7 @@ def _(node: _df.Scope, ctx: TransformerContext):
         repl = {}
         repl_count = 0
         for k, v in node.items():
-            repl[k] = new = ctx.visit_child(v, name=k, parent=node)
+            repl[k] = new = ctx.visit_child(v, name=k.name, parent=node)
             if new is not v:
                 repl_count += 1
 
