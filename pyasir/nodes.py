@@ -22,7 +22,7 @@ from .details import props as _props
 def _generic_binop(self, other, *, op):
     other = as_node(other)
     optrait = self.datatype.get_binop(op, self.datatype, other.datatype)
-    return ExprNode(optrait.result_type, optrait, args=(self, other))
+    return wrap(ExprNode(optrait.result_type, optrait, args=as_node_args((self, other))))
 
 
 ChildTypes = Union["DFNode", tuple["DFNode", ...]]
@@ -183,6 +183,13 @@ class ValueNode(DFNode):
     def __post_init__(self):
         assert isinstance(self.datatype, _dt.DataType), type(self.datatype)
 
+@dataclass(frozen=True)
+class ValueWrap:
+    _node: ValueNode
+
+    def __post_init__(self):
+        assert not isinstance(self._node, ValueWrap)
+
     __add__ = __radd__ = partialmethod(_generic_binop, op="+")
     __sub__ = partialmethod(_generic_binop, op="-")
     __mul__ = partialmethod(_generic_binop, op="*")
@@ -197,9 +204,25 @@ class ValueNode(DFNode):
     __eq__ = partialmethod(_generic_binop, op="==")
     __ne__ = partialmethod(_generic_binop, op="!=")
 
+    @property
+    def datatype(self):
+        return self._node.datatype
+
     def __getattr__(self, attr: str):
         attrop = self.datatype.attribute_lookup(attr)
-        return ExprNode(attrop.result_type, attrop, (self,))
+        return wrap(ExprNode(attrop.result_type, attrop, (self._node,)))
+
+@singledispatch
+def wrap(obj):
+    raise NotImplementedError(type(obj))
+
+@wrap.register
+def _(obj: ValueNode):
+    return ValueWrap(obj)
+
+@wrap.register
+def _(obj: ValueWrap):
+    return obj
 
 
 @custom_pprint
@@ -229,7 +252,11 @@ class Scope(Mapping):
     _values: dict[ArgNode, ValueNode]
 
     def __init__(self, values):
-        self._values = dict(values)
+        vs = dict(values)
+        self._values = {}
+        for k, v in vs.items():
+            assert not isinstance(v, ValueWrap), k
+            self._values[k] = v
 
     def __repr__(self):
         out = []
@@ -310,11 +337,11 @@ class RegionNode(DFNode):
         self, region_func, args: tuple[ValueNode], kwargs: dict[str, ValueNode]
     ) -> tuple[Scope, ValueNode | Iterable[ValueNode]]:
         ab = ArgBinder(region_func)
-        ab.bind_to_valuenodes(args, kwargs)
+        ab.bind_to_valuenodes(as_node_args(args), as_node_kwargs(kwargs))
         args = ab.get_argnodes()
         scope = ab.get_scope()
 
-        res = region_func(*args)
+        res = region_func(*map(wrap, args))
         if not isgenerator(res):
             res = as_node(res)
         return scope, res
@@ -327,6 +354,7 @@ class RegionNode(DFNode):
         args = ab.get_argnodes()
         scope = ab.get_scope()
 
+        args = tuple(map(wrap, args))
         res = region_func(*args)
         return scope, res
 
@@ -335,7 +363,7 @@ def _call_func_no_post(func, argtys):
     ab = ArgBinder(func)
     ab.bind_to_datatypes(argtys, {})
     args = ab.get_argnodes()
-    res = func(*args)
+    res = func(*map(wrap, args))
     return args, res
 
 
@@ -365,10 +393,10 @@ class FuncNode(RegionNode):
                 f"FuncDef returned {node.datatype} instead of {self.retty}"
             )
 
-        return FuncDef(self.func, self.argtys, self.retty, argnodes, node)
+        return FuncDef(self.func, self.argtys, self.retty, argnodes, as_node(node))
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return CallNode.make(self, *args, **kwargs)
+        return wrap(CallNode.make(self, *as_node_args(args), **as_node_kwargs(kwargs)))
 
 
 @custom_pprint
@@ -421,9 +449,9 @@ class SwitchNode(RegionNode):
                 )
         out = CaseExprNode(
             nodes[0].datatype,
-            self.pred_node,
-            tuple(nodes),
-            case_predicates=tuple(cn.case_pred for cn in case_nodes),
+            as_node(self.pred_node),
+            as_node_args(tuple(nodes)),
+            case_predicates=as_node_args(tuple(cn.case_pred for cn in case_nodes)),
         )
         return out
 
@@ -453,6 +481,7 @@ class CaseExprNode(ValueNode):
     case_predicates: Annotated[tuple[LiteralNode, ...], _props.NodeChildren]
 
     def __post_init__(self):
+        assert isinstance(self.pred, DFNode)
         assert isinstance(self.cases, tuple)
         assert isinstance(self.case_predicates, tuple)
         assert len(self.cases) == len(self.case_predicates)
@@ -467,7 +496,7 @@ class CaseExprNode(ValueNode):
                 case_predicates, case_exprs = zip(*case_gen)
                 return CaseExprNode(
                     case_exprs[0].datatype,
-                    pred=pred,
+                    pred=as_node(pred),
                     cases=tuple(
                         EnterNode.make(expr, scope) for expr in case_exprs
                     ),
@@ -515,6 +544,9 @@ class UnpackNode(ValueNode):
     producer: DFNode
     index: int
 
+    def __post_init__(self):
+        assert isinstance(self.producer, DFNode)
+
 
 @custom_pprint
 @dataclass(frozen=True, order=False)
@@ -528,7 +560,7 @@ class ExpandNode(ValueNode):
 
     def __iter__(self):
         unpacked = [
-            UnpackNode(ty, self.origin, i)
+            wrap(UnpackNode(ty, as_node(self.origin), i))
             for i, ty in enumerate(self.datatype.elements)
         ]
         return iter(unpacked)
@@ -566,6 +598,10 @@ class LiteralNode(ValueNode):
 def as_node(val) -> ValueNode:
     raise NotImplementedError(type(val))
 
+
+@as_node.register
+def _(val: ValueWrap):
+    return val._node
 
 @as_node.register
 def _(val: ValueNode):
@@ -630,6 +666,10 @@ class ExprNode(ValueNode):
     op: _dt.OpTrait
     args: Annotated[tuple[ValueNode, ...], _props.NodeChildren]
 
+    def __post_init__(self):
+        for v in self.args:
+            assert isinstance(v, ValueNode)
+
     def __hash__(self):
         return id(self)
 
@@ -661,28 +701,28 @@ def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):
             assert isinstance(v, DFNode)
 
 
-def cast(value: ValueNode, to_type: _dt.DataType) -> DFNode:
-    value = as_node(value)
+def cast(value: ValueWrap, to_type: _dt.DataType) -> ValueWrap:
+    value = wrap(value)
     to_type = _dt.ensure_type(to_type)
     if value.datatype == to_type:
         return value
     op = to_type.get_cast(value.datatype)
-    return ExprNode(op.result_type, op, args=tuple([value]))
+    return wrap(ExprNode(op.result_type, op, args=as_node_args([value])))
 
 
-def make(__dt: _dt.DataType, *args, **kwargs) -> DFNode:
+def make(__dt: _dt.DataType, *args, **kwargs) -> ValueWrap:
     dt = _dt.ensure_type(__dt)
     args = dt.get_make(as_node_args(args), as_node_kwargs(kwargs))
-    return ExprNode(dt, _dt.MakeOp(dt), args=tuple(args.values()))
+    return wrap(ExprNode(dt, _dt.MakeOp(dt), args=tuple(args.values())))
 
 
-def call(__func: Callable, *args, **kwargs) -> DFNode:
+def call(__func: Callable, *args, **kwargs) -> ValueWrap:
     from .typedefs import Function
 
     assert callable(__func)
     fty = Function.lookup(__func)
     op = fty.get_call(args, kwargs)
-    return CallNode(op.result_type, op, args, kwargs)
+    return wrap(CallNode(op.result_type, op, as_node_args(args), as_node_kwargs(kwargs)))
 
 
 def zeroinit(ty: _dt.DataType) -> DFNode:
