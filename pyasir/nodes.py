@@ -208,9 +208,20 @@ class ValueWrap:
     def datatype(self):
         return self._node.datatype
 
+    @property
+    def attrs(self) -> _AttrAccessor:
+        return _AttrAccessor(self._node)
+
+
+class _AttrAccessor:
+    def __init__(self, obj: ValueNode):
+        self.__obj = obj
+
     def __getattr__(self, attr: str):
-        attrop = self.datatype.attribute_lookup(attr)
-        return wrap(ExprNode(attrop.result_type, attrop, (self._node,)))
+        obj = self.__obj
+        attrop = obj.datatype.attribute_lookup(attr)
+        return wrap(ExprNode(attrop.result_type, attrop, (obj,)))
+
 
 @singledispatch
 def wrap(obj):

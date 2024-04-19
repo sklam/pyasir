@@ -16,7 +16,7 @@ class MyStruct:
 def udt(x: pyasir.Int64) -> pyasir.Float64:
     y = df.cast(x, pyasir.Float64) * 0.1
     struct = df.make(MyStruct, x=x, y=y)
-    return df.cast(struct.x, pyasir.Float64) + struct.y
+    return df.cast(struct.attrs.x, pyasir.Float64) + struct.attrs.y
 
 
 def test_struct_llvm():
