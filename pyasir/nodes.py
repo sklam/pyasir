@@ -23,7 +23,9 @@ from .details import props as _props
 def _generic_binop(self, other, *, op):
     other = as_node(other)
     optrait = self.datatype.get_binop(op, self.datatype, other.datatype)
-    return wrap(ExprNode(optrait.result_type, optrait, args=as_node_args((self, other))))
+    return wrap(
+        ExprNode(optrait.result_type, optrait, args=as_node_args((self, other)))
+    )
 
 
 ChildTypes = Union["DFNode", tuple["DFNode", ...]]
@@ -183,6 +185,7 @@ class ValueNode(DFNode):
     def __post_init__(self):
         assert isinstance(self.datatype, _dt.DataType), type(self.datatype)
 
+
 @dataclass(frozen=True)
 class ValueWrap:
     _node: ValueNode
@@ -227,9 +230,11 @@ class _AttrAccessor:
 def wrap(obj):
     raise NotImplementedError(type(obj))
 
+
 @wrap.register
 def _(obj: ValueNode):
     return ValueWrap(obj)
+
 
 @wrap.register
 def _(obj: ValueWrap):
@@ -404,10 +409,14 @@ class FuncNode(RegionNode):
                 f"FuncDef returned {node.datatype} instead of {self.retty}"
             )
 
-        return FuncDef(self.func, self.argtys, self.retty, argnodes, as_node(node))
+        return FuncDef(
+            self.func, self.argtys, self.retty, argnodes, as_node(node)
+        )
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return wrap(CallNode.make(self, *as_node_args(args), **as_node_kwargs(kwargs)))
+        return wrap(
+            CallNode.make(self, *as_node_args(args), **as_node_kwargs(kwargs))
+        )
 
 
 @custom_pprint
@@ -462,7 +471,9 @@ class SwitchNode(RegionNode):
             nodes[0].datatype,
             as_node(self.pred_node),
             as_node_args(tuple(nodes)),
-            case_predicates=as_node_args(tuple(cn.case_pred for cn in case_nodes)),
+            case_predicates=as_node_args(
+                tuple(cn.case_pred for cn in case_nodes)
+            ),
         )
         return out
 
@@ -611,6 +622,7 @@ def as_node(val) -> ValueNode:
 def _(val: ValueWrap):
     return val._node
 
+
 @as_node.register
 def _(val: ValueNode):
     return val
@@ -639,9 +651,9 @@ def as_node_kwargs(kwargs) -> dict[str, ValueNode]:
     return {k: as_node(v) for k, v in kwargs.items()}
 
 
-
 def _unique() -> int:
     return next(ForceUnique.pool_naming)
+
 
 @dataclass(frozen=True)
 class ForceUnique:
@@ -690,11 +702,13 @@ class CallNode(ValueNode):
     def __hash__(self):
         return hash((self.func, self.args, tuple(self.kwargs.items())))
 
+
 def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):
     if scope is not None:
         for k, v in scope.items():
             assert isinstance(k, ArgNode)
             assert isinstance(v, DFNode)
+
 
 def cast(value: ValueWrap, to_type: _dt.DataType) -> ValueWrap:
     value = wrap(value)
@@ -717,7 +731,9 @@ def call(__func: Callable, *args, **kwargs) -> ValueWrap:
     assert callable(__func)
     fty = Function.lookup(__func)
     op = fty.get_call(args, kwargs)
-    return wrap(CallNode(op.result_type, op, as_node_args(args), as_node_kwargs(kwargs)))
+    return wrap(
+        CallNode(op.result_type, op, as_node_args(args), as_node_kwargs(kwargs))
+    )
 
 
 def zeroinit(ty: _dt.DataType) -> DFNode:

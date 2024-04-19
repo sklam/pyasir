@@ -89,15 +89,19 @@ def load(dt: _dt.DataType, ptr: Pointer):
 
 
 def store(ptr: Pointer, item) -> IO:
-    return _df.wrap(_df.ExprNode(
-        IO(), PointerStore(IO(), item_type=item.datatype), args=_df.as_node_args((ptr, item))
-    ))
+    return _df.wrap(
+        _df.ExprNode(
+            IO(),
+            PointerStore(IO(), item_type=item.datatype),
+            args=_df.as_node_args((ptr, item)),
+        )
+    )
 
 
 def as_pointer(ptr: Pointer) -> _df.ValueNode:
-    return _df.wrap(_df.ExprNode(
-        Pointer(), IntToPtr(Pointer()), args=(_df.as_node(ptr),)
-    ))
+    return _df.wrap(
+        _df.ExprNode(Pointer(), IntToPtr(Pointer()), args=(_df.as_node(ptr),))
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -138,7 +142,7 @@ def eval_op_PointerLoad(op: PointerLoad, ptr):
     print("load", hex(ptr))
     # prevent using a reference
     out = ct_result.from_buffer_copy(ct_result.from_address(ptr))
-    print("  loaded", ' '.join([f"{b:02x}" for b in bytes(out)]))
+    print("  loaded", " ".join([f"{b:02x}" for b in bytes(out)]))
     return out
 
 

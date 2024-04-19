@@ -9,7 +9,7 @@ from pyasir.typedefs import io
 
 @pyasir.Struct
 class DataNode:
-    next: pyasir.Pointer #["DataNode"]
+    next: pyasir.Pointer  # ["DataNode"]
     data: pyasir.Int64
 
 
@@ -18,15 +18,17 @@ def process_list(n: pyasir.Int64) -> pyasir.Int64:
     struct_sizeof = 16
     null = pointer_api.as_pointer(0)
 
-    ptr = null = pointer_api.as_pointer(0)  #null
+    ptr = null = pointer_api.as_pointer(0)  # null
 
     # Init loop
     @pir.loop
     def loop(ptr, i, n):
-        node = pir.make(DataNode,  next=ptr, data=i)  # DataNode(next=ptr, data=i)
+        node = pir.make(
+            DataNode, next=ptr, data=i
+        )  # DataNode(next=ptr, data=i)
         ptr = io.sync(  # monad
-            newptr := pointer_api.alloc(struct_sizeof), # newptr = malloc
-            pointer_api.store(newptr, node),            # *newptr = node
+            newptr := pointer_api.alloc(struct_sizeof),  # newptr = malloc
+            pointer_api.store(newptr, node),  # *newptr = node
             newptr,
         )
         i += 1
@@ -43,7 +45,7 @@ def process_list(n: pyasir.Int64) -> pyasir.Int64:
 
         cur = io.sync(  # do monad
             cur := pointer_api.load(DataNode, ptr),
-            pointer_api.free(ptr), # -> IO
+            pointer_api.free(ptr),  # -> IO
             cur,
         )
         ptr = cur.attrs.next
@@ -61,11 +63,8 @@ def test_pointer_interpret():
     assert res == sum(range(10))
 
 
-
 def test_pointer_llvm():
     tree = process_list.build_node()
     jf = generate(tree)
     res = jf(10)
     assert res == sum(range(10))
-
-

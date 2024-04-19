@@ -39,7 +39,6 @@ def test_forloop():
     assert res == expected
 
 
-
 @pir.func
 def forloop_twice(n: Int64) -> Int64:
     c = 0
@@ -51,8 +50,8 @@ def forloop_twice(n: Int64) -> Int64:
 
     (i, c) = pir.unpack(loop(iterator, c))
 
-
     iterator = pir.call(range, c)
+
     @pir.dialect.py.forloop
     def loop(i, c):
         return pir.pack(i, c + i)
@@ -77,7 +76,6 @@ def test_forloop_twice():
     jf = generate(transformed)
     res = jf(arg)
     assert res == expected
-
 
 
 # if __name__ == "__main__":

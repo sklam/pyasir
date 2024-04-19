@@ -12,7 +12,10 @@ def lift_and_inline(expr: _df.EnterNode, args: _df.ValueNode):
     assert isinstance(expr, _df.EnterNode)
     lifted, argmap = lift(expr.body, expr.scope)
     return _df.EnterNode.make(
-        lifted, _df.Scope(dict(zip(argmap.values(), _df.as_node_args(args), strict=True)))
+        lifted,
+        _df.Scope(
+            dict(zip(argmap.values(), _df.as_node_args(args), strict=True))
+        ),
     )
 
 
@@ -95,6 +98,7 @@ def _(node: _df.DFNode, ctx: TransformerContext):
         return node.replace_child_nodes(repl) if repl_count else node
     else:
         return result
+
 
 @transform_visitor.register
 def _(node: _df.Scope, ctx: TransformerContext):

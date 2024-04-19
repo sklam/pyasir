@@ -88,7 +88,10 @@ class RAII:
         assert bad_case_res.datatype == ok_case_res.datatype
 
         valexpr = _df.CaseExprNode(
-            ok_case_res.datatype, predicate, (enter_ok, enter_bad), _df.as_node_args((True, False))
+            ok_case_res.datatype,
+            predicate,
+            (enter_ok, enter_bad),
+            _df.as_node_args((True, False)),
         )
 
         # epilog

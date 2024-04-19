@@ -95,10 +95,10 @@ class JittedFunction:
 
     def to_graphviz(self):
         import graphviz as gv
+
         llmod = self.llmod
         cfg = llvm.get_function_cfg(llmod.get_function(self.fname))
         return gv.Source(cfg)
-
 
 
 def make_llvm_jit(mod: ir.Module):
@@ -280,7 +280,9 @@ def _emit_node_UnpackNode(node: _df.UnpackNode, be: LLVMBackend):
 def _emit_node_LoopExprNode(node: _df.LoopExprNode, be: LLVMBackend):
     scope = node.body.scope
 
-    incoming_values = {k: (be.emit(v), be.builder.block) for k, v in scope.items()}
+    incoming_values = {
+        k: (be.emit(v), be.builder.block) for k, v in scope.items()
+    }
 
     bb_loop = be.builder.append_basic_block("loop")
     bb_endloop = be.builder.append_basic_block("endloop")
