@@ -3,6 +3,7 @@ from __future__ import annotations
 import weakref
 from dataclasses import (
     dataclass,
+    field,
     replace as _dc_replace,
     fields as _dc_fields,
 )
@@ -250,9 +251,6 @@ class EnterNode(ValueNode):
         _sentry_scope(scope)
         return cls(datatype=body.datatype, body=body, scope=scope)
 
-    def __hash__(self):
-        return id(self)
-
     def verify(self):
         scope = self.scope
         for argnode in self.get_arg_nodes():
@@ -268,6 +266,9 @@ class Scope(Mapping):
         for k, v in vs.items():
             assert not isinstance(v, ValueWrap), k
             self._values[k] = v
+
+    def __hash__(self) -> int:
+        return hash((tuple(self.keys()), tuple(self.values())))
 
     def __repr__(self):
         out = []
@@ -535,9 +536,6 @@ class CaseNode(RegionNode):
 class LoopExprNode(ValueNode):
     body: EnterNode
 
-    def __hash__(self):
-        return id(self)
-
     @classmethod
     def template(cls, func):
         def inner(*args):
@@ -642,30 +640,21 @@ def as_node_kwargs(kwargs) -> dict[str, ValueNode]:
     return {k: as_node(v) for k, v in kwargs.items()}
 
 
+
+def _unique() -> int:
+    return next(ForceUnique.pool_naming)
+
+@dataclass(frozen=True)
+class ForceUnique:
+    uid: int = field(default_factory=_unique)
+    pool_naming = iter(range(2**64))
+
+
 @custom_pprint
 @dataclass(frozen=True)
 class ArgNode(ValueNode):
     name: str
-
-    pool = weakref.WeakKeyDictionary()
-    pool_naming = iter(range(2**64))
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.pool[self] = str(next(self.pool_naming))
-
-    def __eq__(self, other):
-        return id(self) == id(other)
-
-    def __hash__(self):
-        return hash(id(self))
-
-    def __repr__(self):
-        return f"ArgNode({self.name!r}, uid={self._uid()})"
-        # return f"ArgNode({self.name!r} at {hex(id(self))})"
-
-    def _uid(self) -> str:
-        return self.pool[self]
+    _uid: ForceUnique = field(default_factory=ForceUnique)
 
     def clone(self):
         return ArgNode(self.datatype, self.name)
@@ -681,9 +670,6 @@ class ExprNode(ValueNode):
         for v in self.args:
             assert isinstance(v, ValueNode)
 
-    def __hash__(self):
-        return id(self)
-
 
 @custom_pprint
 @dataclass(frozen=True)
@@ -691,6 +677,7 @@ class CallNode(ValueNode):
     func: FuncNode
     args: Annotated[tuple[ValueNode, ...], _props.NodeChildren]
     kwargs: dict
+    _uid: ForceUnique = field(default_factory=ForceUnique)
 
     @classmethod
     def make(cls, func: FuncNode, *args, **kwargs):
@@ -702,15 +689,13 @@ class CallNode(ValueNode):
         )
 
     def __hash__(self):
-        return id(self)
-
+        return hash((self.func, self.args, tuple(self.kwargs.items())))
 
 def _sentry_scope(scope: Scope[ArgNode, DFNode] | None):
     if scope is not None:
         for k, v in scope.items():
             assert isinstance(k, ArgNode)
             assert isinstance(v, DFNode)
-
 
 def cast(value: ValueWrap, to_type: _dt.DataType) -> ValueWrap:
     value = wrap(value)

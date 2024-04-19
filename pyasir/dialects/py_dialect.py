@@ -62,9 +62,6 @@ class ForLoopExprNode(ValueNode):
     iterator: ValueNode
     body: EnterNode
 
-    def __hash__(self):
-        return id(self)
-
     def dialect_lower(self):
         @_df.LoopExprNode.template
         def new_loop(iterator, indvar_init, *args):
