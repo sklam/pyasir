@@ -118,11 +118,11 @@ def sync(io, *args) -> _df.DFNode:
     #     assert isinstance(st.datatype, IO)
     value = args[-1]
     dt = value.datatype
-    return _df.ExprNode(dt, SyncOp(dt), args=(*states, value))
+    return _df.wrap(_df.ExprNode(dt, SyncOp(dt), args=(*states, value)))
 
 
 def seq() -> _df.DFNode:
-    return _df.ExprNode(IO(), StateOp(IO()), args=())
+    return _df.wrap(_df.ExprNode(IO(), StateOp(IO()), args=()))
 
 
 @eval_op.register

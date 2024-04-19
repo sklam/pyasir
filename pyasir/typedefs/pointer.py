@@ -85,19 +85,19 @@ class PointerStore(OpTrait):
 
 def load(dt: _dt.DataType, ptr: Pointer):
     dt = _dt.ensure_type(dt)
-    return _df.ExprNode(dt, PointerLoad(dt), args=(ptr,))
+    return _df.wrap(_df.ExprNode(dt, PointerLoad(dt), args=(_df.as_node(ptr),)))
 
 
 def store(ptr: Pointer, item) -> IO:
-    return _df.ExprNode(
-        IO(), PointerStore(IO(), item_type=item.datatype), args=(ptr, item)
-    )
+    return _df.wrap(_df.ExprNode(
+        IO(), PointerStore(IO(), item_type=item.datatype), args=_df.as_node_args((ptr, item))
+    ))
 
 
 def as_pointer(ptr: Pointer) -> _df.ValueNode:
-    return _df.ExprNode(
+    return _df.wrap(_df.ExprNode(
         Pointer(), IntToPtr(Pointer()), args=(_df.as_node(ptr),)
-    )
+    ))
 
 
 # -----------------------------------------------------------------------------
