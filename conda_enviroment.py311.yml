@@ -1,0 +1,9 @@
+name: /Users/siu/dev/etudes/_pyasir.py311.env
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pytest
+  - numba::llvmlite
+  - mypy
+prefix: /Users/siu/dev/etudes/_pyasir.py311.env
