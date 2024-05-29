@@ -26,6 +26,8 @@ INT_BINOPS = {
 }
 
 CMPOPS = {
+    "==": lambda restype: IntBinop(restype, operator.eq),
+    "!=": lambda restype: IntBinop(restype, operator.ne),
     "<=": lambda restype: IntBinop(restype, operator.le),
     ">=": lambda restype: IntBinop(restype, operator.ge),
     ">": lambda restype: IntBinop(restype, operator.gt),
@@ -78,7 +80,11 @@ def _(datatype: Int64, builder: ir.IRBuilder, value: ir.Value):
 def _(op: IntBinop, builder: ir.IRBuilder, lhs: ir.Value, rhs: ir.Value):
     opimpl = op.py_impl
 
-    if opimpl == operator.le:
+    if opimpl == operator.eq:
+        return builder.icmp_signed("==", lhs, rhs)
+    elif opimpl == operator.ne:
+        return builder.icmp_signed("!=", lhs, rhs)
+    elif opimpl == operator.le:
         return builder.icmp_signed("<=", lhs, rhs)
     elif opimpl == operator.ge:
         return builder.icmp_signed(">=", lhs, rhs)
