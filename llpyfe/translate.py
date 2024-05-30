@@ -3,12 +3,13 @@ import copy
 import importlib
 import mypy.nodes as _mypy
 import mypy.types as _mypyt
+import mypy.traverser as _mypytraverser
 import textwrap
 import re
 import ast
 from dataclasses import dataclass
 from functools import singledispatch
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Sequence
 
 
 _REGEX_AST_TEMPLATE = re.compile(r"( *)(\$[a-zA-Z_0-9]+)")
@@ -213,7 +214,7 @@ class Translator:
 
 
     def translate(self, fndef: _mypy.FuncDef) -> str:
-        sourcegen = mypy_to_ast(fndef)
+        sourcegen = mypy_to_ast(fndef, ())
         astree = sourcegen.generate_ast()
         sourcegen.augment_named_blocks(astree)
         tree = PostProcessSeq().visit(astree)
@@ -288,8 +289,8 @@ def _post_proc_body(nodes):
 
 
 
-def mypy_to_ast(tree: _mypy.Node) -> SourceGen:
-    out = _mypy_to_ast(tree)
+def mypy_to_ast(tree: _mypy.Node, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    out = _mypy_to_ast(tree, remaining)
     assert isinstance(out, SourceGen), f"{type(tree)} didn't return SourceGen"
     return out
 
@@ -353,14 +354,24 @@ class BlockSyncWriter:
 class FindLoadedNames(ast.NodeVisitor):
     def __init__(self):
         super().__init__()
-        self.__modified_vars = set()
+        self.__name_read = set()
+        self.__name_written = set()
+        self.__locally_defined = set()
 
-    def get(self) -> set[str]:
-        return frozenset(self.__modified_vars)
+    def get_read(self) -> set[str]:
+        return frozenset(self.__name_read)
+
+    def get_written(self) -> set[str]:
+        return frozenset(self.__name_written - self.__locally_defined)
 
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, ast.Store):
-            self.__modified_vars.add(node.id)
+            self.__name_written.add(node.id)
+            if node.id not in self.__name_read:
+                self.__locally_defined.add(node.id)
+        if isinstance(node.ctx, ast.Load):
+            # if node.id not in self.__name_written:
+            self.__name_read.add(node.id)
 
     def handle(self, srcgen: SourceGen):
         if isinstance(srcgen, SourceBlock):
@@ -372,12 +383,62 @@ class FindLoadedNames(ast.NodeVisitor):
             raise TypeError(type(srcgen))
 
 
-
-def find_loaded_names(block: list[SourceGen]) -> frozenset[str]:
+def find_loaded_names(block: list[SourceGen]) -> FindLoadedNames:
     finder = FindLoadedNames()
     for b in block:
         finder.handle(b)
-    return finder.get()
+    return finder
+
+
+class FindMyPyNames(_mypytraverser.ExtendedTraverserVisitor):
+    def __init__(self):
+        super().__init__()
+        self.__name_read = set()
+        self.__name_written = set()
+        self.__locally_defined = set()
+        self.__read_imported = set()
+        self.in_left_value = 0
+
+    def get_read(self) -> set[str]:
+        return frozenset(self.__read_imported)
+
+    def get_written(self) -> set[str]:
+        return frozenset(self.__name_written)
+
+    def get_first_def(self) -> set[str]:
+        return frozenset(self.__locally_defined)
+
+    def visit_name_expr(self, expr: _mypy.NameExpr) -> None:
+
+        if self.in_left_value > 0:
+            print("WRITTEN", expr.name)
+            self.__name_written.add(expr.name)
+            if expr.name not in self.__name_read:
+                print("DEF", expr.name)
+                self.__locally_defined.add(expr.name)
+        else:
+            print("READ", expr.name)
+            self.__name_read.add(expr.name)
+            if expr.name not in self.__name_written:
+                self.__read_imported.add(expr.name)
+
+    def visit_assignment_stmt(self, stmt: _mypy.AssignmentStmt) -> None:
+
+        stmt.rvalue.accept(self)
+        for lv in stmt.lvalues:
+            self.in_left_value += 1
+            lv.accept(self)
+            self.in_left_value -= 1
+
+
+def find_mypy_names(nodes: list[_mypy.Node]) -> FindMyPyNames:
+    print('------')
+    finder = FindMyPyNames()
+    for node in nodes:
+        node.accept(finder)
+    print("======")
+    return finder
+
 
 
 def load_pyasir_type(tyname: str):
@@ -389,12 +450,12 @@ def load_pyasir_type(tyname: str):
 
 
 @singledispatch
-def _mypy_to_ast(tree: _mypy.Node) -> SourceGen:
+def _mypy_to_ast(tree: _mypy.Node, remaining: Sequence[_mypy.Node]) -> SourceGen:
     raise NotImplementedError(tree)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.FuncDef) -> SourceGen:
+def _(tree: _mypy.FuncDef, remaining: Sequence[_mypy.Node]) -> SourceGen:
     arg_pos = get_funcdef_args(tree)
 
     calltype: _mypyt.CallableType = tree.type
@@ -410,7 +471,7 @@ def _(tree: _mypy.FuncDef) -> SourceGen:
     repl = {
         "$name": tree.name,
         "$args": ", ".join(prepared_args),
-        "$body": mypy_to_ast(tree.body),
+        "$body": mypy_to_ast(tree.body, ()),
         "$retty": pir_retty,
     }
     nodes = ast_template(
@@ -425,17 +486,17 @@ def $name($args) -> $retty:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.Decorator) -> SourceGen:
+def _(tree: _mypy.Decorator, remaining: Sequence[_mypy.Node]) -> SourceGen:
     [decor] = tree.decorators
     if decor.node.fullname == "llpyfe.aot":
         repl = {
             "$decor": "",
-            "$func": mypy_to_ast(tree.func),
+            "$func": mypy_to_ast(tree.func, ()),
         }
     else:
         repl = {
-            "$decor": "@" + mypy_to_ast(decor),
-            "$func": mypy_to_ast(tree.func),
+            "$decor": "@" + mypy_to_ast(decor, ()),
+            "$func": mypy_to_ast(tree.func, ()),
         }
     return ast_template(
         """$decor\n$func
@@ -445,21 +506,23 @@ def _(tree: _mypy.Decorator) -> SourceGen:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.Block) -> SourceGen:
-    ast_stmt_list = [mypy_to_ast(stmt) for stmt in tree.body]
-
+def _(tree: _mypy.Block, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    body = tree.body
+    ast_stmt_list = []
+    for i, stmt in enumerate(body):
+        ast_stmt_list.append(mypy_to_ast(stmt, body[i + 1:]))
 
     return SourceBlock([], ast_stmt_list)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.AssignmentStmt) -> SourceGen:
+def _(tree: _mypy.AssignmentStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     [lhs] = tree.lvalues
     rhs = tree.rvalue
     tree = ast_template(
         f"$lhs = $rhs",
-        {"$lhs": mypy_to_ast(lhs),
-         "$rhs": mypy_to_ast(rhs)},
+        {"$lhs": mypy_to_ast(lhs, ()),
+         "$rhs": mypy_to_ast(rhs, ())},
     )
     return tree
 
@@ -471,7 +534,7 @@ def prepare_iterator_call(iter_expr: _mypy.CallExpr) -> tuple[SourceGen, list[So
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ForStmt) -> SourceGen:
+def _(tree: _mypy.ForStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     index = tree.index
     index_name = index.name
     iter_expr = tree.expr
@@ -510,18 +573,25 @@ def loop($args):
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.IfStmt) -> SourceGen:
+def _(tree: _mypy.IfStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    names = find_mypy_names([tree])
+    known_names = {'_df', '__pir__', 'switch', 'advance', 'list'}
+    loaded_names =( names.get_read() | {'__pir_seq__'}) - known_names - names.get_first_def()
+    stored_names = names.get_written() #- names.get_first_def()
+
     [pred_tree] = tree.expr
     [body_tree] = tree.body
-    pred_expr = mypy_to_ast(pred_tree)
-    body_block = mypy_to_ast(body_tree)
-    else_block = (mypy_to_ast(tree.else_body)
+    pred_expr = mypy_to_ast(pred_tree, remaining)
+    body_block = mypy_to_ast(body_tree, remaining)
+    else_block = (mypy_to_ast(tree.else_body, remaining)
                   if tree.else_body is not None
                   else SourceBlock.empty())
 
-    modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
+    # names = find_loaded_names(body_block.statements)
+    # modified_names = loaded_names | stored_names
     repl = {
-        "$args": ', '.join(modified_names),
+        "$args": ', '.join(loaded_names),
+        "$outs": ', '.join(stored_names | loaded_names),
         "$pred": pred_expr,
         "$body": body_block,
         "$else_body": else_block,
@@ -531,12 +601,12 @@ def switch($args):
     @__pir__.case(1)
     def ifblk($args):
         $body
-        return __pir__.pack($args)
+        return __pir__.pack($outs)
 
     @__pir__.case(0)
     def elseblk($args):
         $else_body
-        return __pir__.pack($args)
+        return __pir__.pack($outs)
 
     yield ifblk
     yield elseblk
@@ -544,7 +614,7 @@ def switch($args):
     repl)
 
     return ast_template("""
-[$args] = __pir__.unpack(__pir__.switch($pred)(switch)($args))
+[$outs] = __pir__.unpack(__pir__.switch($pred)(switch)($args))
         """,
         repl
 
@@ -553,22 +623,33 @@ def switch($args):
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.WhileStmt) -> SourceGen:
+def _(tree: _mypy.WhileStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     pred_tree = tree.expr
     body_tree = tree.body
-    pred_expr = mypy_to_ast(pred_tree)
-    body_block = mypy_to_ast(body_tree)
+    pred_expr = mypy_to_ast(pred_tree, remaining)
+    body_block = mypy_to_ast(body_tree, remaining)
     assert tree.else_body is None
 
-    modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
+    names = find_mypy_names([tree])
+    # breakpoint()
+
+    # names = find_loaded_names(body_block.statements)
+    # breakpoint()
+    # names_after = find_mypy_names(remaining)
+    # breakpoint()
+    known_names = {'_df', '__pir__', 'switch', 'advance', 'pir', 'list'}
+    loaded_names =( names.get_read() | {'__pir_seq__'}) - known_names - names.get_first_def()
+    stored_names = names.get_written() - names.get_first_def()
+    # breakpoint()
     repl = {
-        "$args": ', '.join(modified_names),
+        "$args": ', '.join(loaded_names | stored_names),
+        "$outs": ', '.join(loaded_names | stored_names),
         "$pred": pred_expr,
         "$body": body_block,
     }
-    assert modified_names, breakpoint()
+    print(repl)
     sg = ast_template("""
-[$args] = __pir__.unpack(__pir__.switch($pred)(swt_while)($args))
+[$outs] = __pir__.unpack(__pir__.switch($pred)(swt_while)($args))
 __pir_seq__ = io.sync($args, __pir_seq__)
         """,
         repl
@@ -578,19 +659,19 @@ __pir_seq__ = io.sync($args, __pir_seq__)
     """
 def loop($args):
     $body
-    return $pred, __pir__.pack($args)
+    return $pred, __pir__.pack($outs)
 """, repl))
     blocks.append(ast_template(
     """
 def swt_while($args) :
     @__pir__.case(1)
     def case1($args):
-        [$args] = __pir__.unpack(__pir__.loop(loop)($args))
-        return __pir__.pack($args)
+        [$outs] = __pir__.unpack(__pir__.loop(loop)($args))
+        return __pir__.pack($outs)
 
     @__pir__.case(0)
     def case0($args):
-        return __pir__.pack($args)
+        return __pir__.pack($outs)
 
     yield case1
     yield case0
@@ -600,7 +681,7 @@ def swt_while($args) :
     return sg.with_named_blocks(blocks)
 
 @_mypy_to_ast.register
-def _(tree: _mypy.AssignmentExpr) -> SourceGen:
+def _(tree: _mypy.AssignmentExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     lhs = ast.Name(id=str(tree.target.name), ctx=ast.Store())
     rhs = mypy_to_ast(tree.value).generate_ast()
     rhs = normalize_ast_module(rhs)
@@ -608,24 +689,24 @@ def _(tree: _mypy.AssignmentExpr) -> SourceGen:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ExpressionStmt) -> SourceGen:
+def _(tree: _mypy.ExpressionStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return mypy_to_ast(tree.expr)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.OpExpr) -> SourceGen:
+def _(tree: _mypy.OpExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     op = tree.op
     assert op == "+"
 
     return ast_template(
-        f"$left {op} $right", {"$left": mypy_to_ast(tree.left),
-                               "$right": mypy_to_ast(tree.right)})
+        f"$left {op} $right", {"$left": mypy_to_ast(tree.left, ()),
+                               "$right": mypy_to_ast(tree.right, ())})
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ComparisonExpr) -> SourceGen:
+def _(tree: _mypy.ComparisonExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     [opstr] = tree.operators
-    [lhs, rhs] = map(mypy_to_ast, tree.operands)
+    [lhs, rhs] = map(lambda x: mypy_to_ast(x, ()), tree.operands)
     repl = {
         "$lhs": lhs,
         "$rhs": rhs,
@@ -637,7 +718,7 @@ def _(tree: _mypy.ComparisonExpr) -> SourceGen:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.OperatorAssignmentStmt) -> SourceGen:
+def _(tree: _mypy.OperatorAssignmentStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     opstr = tree.op + "="
     return ast_template(
         f"$lhs {opstr} $rhs",
@@ -649,49 +730,49 @@ def _(tree: _mypy.OperatorAssignmentStmt) -> SourceGen:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.CallExpr) -> SourceGen:
+def _(tree: _mypy.CallExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     callee: _mypy.NameExpr = tree.callee
-    argbuf = ", ".join([mypy_to_ast(arg).generate_source() for arg in tree.args])
+    argbuf = ", ".join([mypy_to_ast(arg, ()).generate_source() for arg in tree.args])
     return ast_template(
         f"$callee($args)",
         {
-            "$callee": mypy_to_ast(callee),
+            "$callee": mypy_to_ast(callee, ()),
             "$args": argbuf,
         },
     )
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.MemberExpr) -> SourceGen:
+def _(tree: _mypy.MemberExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     repl = {
-        "$base": mypy_to_ast(tree.expr),
+        "$base": mypy_to_ast(tree.expr, ()),
     }
     return ast_template(f"$base.{tree.name}", repl)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.ReturnStmt) -> SourceGen:
-    repl = {"$value": mypy_to_ast(tree.expr)}
+def _(tree: _mypy.ReturnStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    repl = {"$value": mypy_to_ast(tree.expr, ())}
     return ast_template(f"return $value", repl)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.NameExpr) -> SourceGen:
+def _(tree: _mypy.NameExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return ast_parse_eval(tree.name)
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.StrExpr) -> SourceGen:
+def _(tree: _mypy.StrExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return ast_parse_eval(f"{tree.value!r}")
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.IntExpr) -> SourceGen:
+def _(tree: _mypy.IntExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return ast_parse_eval(f"{tree.value}")
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.PassStmt) -> SourceGen:
+def _(tree: _mypy.PassStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return SourceBlock.empty()
 
 
@@ -704,9 +785,9 @@ def _(tree: _mypy.PassStmt) -> SourceGen:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.IndexExpr) -> SourceGen:
-    index = mypy_to_ast(tree.index)
-    base = mypy_to_ast(tree.base)
+def _(tree: _mypy.IndexExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    index = mypy_to_ast(tree.index, ())
+    base = mypy_to_ast(tree.base, ())
     return ast_template("$base[$index]", {"$index": index, "$base": base})
 
 
