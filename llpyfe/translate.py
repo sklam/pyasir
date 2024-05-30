@@ -27,11 +27,31 @@ def auto_format_source(code: str) -> str:
 
 @dataclass(frozen=True)
 class SourceGen:
+    named_blocks: list[SourceGen]
+
+    def __post_init__(self):
+        assert isinstance(self.named_blocks, list)
+        for blk in self.named_blocks:
+            assert isinstance(blk, SourceGen)
+
     def generate_source(self) -> str:
         return ast.unparse(self.generate_ast())
 
     def generate_ast(self) -> ast.AST:
         raise NotImplementedError(type(self))
+
+    def with_named_blocks(self, blks):
+        self.named_blocks.extend(blks)
+        return self
+
+    def augment_named_blocks(self, ast_mod):
+        mod_body = ast_mod.body
+        for blk in self.named_blocks:
+            tree = blk.generate_ast()
+            assert isinstance(tree, ast.Module)
+            blk.augment_named_blocks(ast_mod)
+            mod_body.append(tree.body)
+        return mod_body
 
 
 @dataclass(frozen=True)
@@ -39,6 +59,7 @@ class SourceBlock(SourceGen):
     statements: list[SourceGen]
 
     def __post_init__(self):
+        super().__post_init__()
         copied = self.statements.copy()
         self.statements.clear()
         for stmt in copied:
@@ -48,6 +69,8 @@ class SourceBlock(SourceGen):
                 self.statements.append(stmt)
             else:
                 assert not isinstance(stmt, ast.AST)
+        for stmt in self.statements:
+            self.named_blocks.extend(stmt.named_blocks)
 
     def generate_ast(self) -> ast.AST:
         nodes = [stmt.generate_ast() for stmt in self.statements]
@@ -55,7 +78,7 @@ class SourceBlock(SourceGen):
 
     @staticmethod
     def empty() -> SourceBlock:
-        return SourceBlock([])
+        return SourceBlock([], [])
 
 
 @dataclass(frozen=True)
@@ -76,7 +99,7 @@ class ASTWrapper(SourceGen):
             print(source)
             breakpoint()
             raise
-        return ASTWrapper(tree)
+        return ASTWrapper([], tree)
 
     def generate_ast(self) -> ast.AST:
         return self.astree
@@ -101,16 +124,18 @@ _TemplateReplVal = str | SourceBlock
 
 
 def ast_parse_eval(text: str) -> SourceGen:
-    return ASTWrapper(ast.parse(text, mode="eval"))
+    return ASTWrapper([], ast.parse(text, mode="eval"))
 
 
 def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> SourceGen:
+    out_blocks = []
     def match(m):
         spaces: str = m.group(1)
         key: str = m.group(2)
         out = repl[key]
 
         if isinstance(out, SourceGen):
+            out_blocks.extend(out.named_blocks)
             out = out.generate_source()
         else:
             assert isinstance(out, str)
@@ -123,10 +148,10 @@ def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> SourceGen:
     if isinstance(tree, ast.Module):
         if len(tree.body) == 1:
             [stmt] = tree.body
-            return ASTWrapper(stmt)
+            return ASTWrapper(stmt).with_named_blocks(out_blocks)
         else:
-            return SourceBlock(tree.body)
-    return tree
+            return SourceBlock(tree.body).with_named_blocks(out_blocks)
+    return tree.with_named_blocks(out_blocks)
 
 
 class Translator:
@@ -188,7 +213,10 @@ class Translator:
 
 
     def translate(self, fndef: _mypy.FuncDef) -> str:
-        tree = PostProcessSeq().visit(mypy_to_ast(fndef).generate_ast())
+        sourcegen = mypy_to_ast(fndef)
+        astree = sourcegen.generate_ast()
+        sourcegen.augment_named_blocks(astree)
+        tree = PostProcessSeq().visit(astree)
         # print("ast.dump".center(80, "-"))
         # print(ast.dump(tree, indent=4))
         print("=" * 80)
@@ -421,7 +449,7 @@ def _(tree: _mypy.Block) -> SourceGen:
     ast_stmt_list = [mypy_to_ast(stmt) for stmt in tree.body]
 
 
-    return SourceBlock(ast_stmt_list)
+    return SourceBlock([], ast_stmt_list)
 
 
 @_mypy_to_ast.register
@@ -430,7 +458,7 @@ def _(tree: _mypy.AssignmentStmt) -> SourceGen:
     rhs = tree.rvalue
     tree = ast_template(
         f"$lhs = $rhs",
-        {"$lhs": lhs.name,
+        {"$lhs": mypy_to_ast(lhs),
          "$rhs": mypy_to_ast(rhs)},
     )
     return tree
@@ -498,9 +526,7 @@ def _(tree: _mypy.IfStmt) -> SourceGen:
         "$body": body_block,
         "$else_body": else_block,
     }
-
-    return ast_template("""
-@__pir__.switch($pred)
+    block = ast_template("""
 def switch($args):
     @__pir__.case(1)
     def ifblk($args):
@@ -514,12 +540,15 @@ def switch($args):
 
     yield ifblk
     yield elseblk
+""",
+    repl)
 
-[$args] = __pir__.unpack(switch($args))
+    return ast_template("""
+[$args] = __pir__.unpack(__pir__.switch($pred)(switch)($args))
         """,
         repl
 
-    )
+    ).with_named_blocks([block])
 
 
 
@@ -538,16 +567,25 @@ def _(tree: _mypy.WhileStmt) -> SourceGen:
         "$body": body_block,
     }
     assert modified_names, breakpoint()
-    return ast_template("""
-@__pir__.switch($pred)
+    sg = ast_template("""
+[$args] = __pir__.unpack(__pir__.switch($pred)(swt_while)($args))
+__pir_seq__ = io.sync($args, __pir_seq__)
+        """,
+        repl
+    )
+    blocks = []
+    blocks.append(ast_template(
+    """
+def loop($args):
+    $body
+    return $pred, __pir__.pack($args)
+""", repl))
+    blocks.append(ast_template(
+    """
 def swt_while($args) :
     @__pir__.case(1)
     def case1($args):
-        @__pir__.loop
-        def loop($args):
-            $body
-            return $pred, __pir__.pack($args)
-        [$args] = __pir__.unpack(loop($args))
+        [$args] = __pir__.unpack(__pir__.loop(loop)($args))
         return __pir__.pack($args)
 
     @__pir__.case(0)
@@ -556,13 +594,10 @@ def swt_while($args) :
 
     yield case1
     yield case0
+""", repl
+    ))
 
-[$args] = __pir__.unpack(swt_while($args))
-__pir_seq__ = io.sync($args, __pir_seq__)
-        """,
-        repl
-
-    )
+    return sg.with_named_blocks(blocks)
 
 @_mypy_to_ast.register
 def _(tree: _mypy.AssignmentExpr) -> SourceGen:
@@ -658,6 +693,21 @@ def _(tree: _mypy.IntExpr) -> SourceGen:
 @_mypy_to_ast.register
 def _(tree: _mypy.PassStmt) -> SourceGen:
     return SourceBlock.empty()
+
+
+# @_mypy_to_ast.register
+# def _(tree: _mypy.TupleExpr) -> SourceGen:
+#     items = list(map(mypy_to_ast, tree.items))
+#     repl = {f"${i}": it for i, it in enumerate(items)}
+#     keys = ', '.join(repl.keys())
+#     return ast_template(f"({keys},)", repl)
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.IndexExpr) -> SourceGen:
+    index = mypy_to_ast(tree.index)
+    base = mypy_to_ast(tree.base)
+    return ast_template("$base[$index]", {"$index": index, "$base": base})
 
 
 def get_funcdef_args(fndef: _mypy.FuncDef) -> tuple[str]:
