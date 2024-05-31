@@ -644,23 +644,31 @@ def _(tree: _mypy.WhileStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     assert tree.else_body is None
 
     names = find_mypy_names([tree])
-    # breakpoint()
 
     # names = find_loaded_names(body_block.statements)
-    # breakpoint()
     # names_after = find_mypy_names(remaining)
-    # breakpoint()
     loaded_names =( names.get_read() | {'__pir_seq__'}) - _the_known_names - names.get_first_def()
-    stored_names = names.get_written() - names.get_first_def()
-    # breakpoint()
+    # stored_names = names.get_written() - names.get_first_def()
+    read_afterwards = find_mypy_names(remaining).get_read()
+    loop_vars = loaded_names | read_afterwards
+    missing_defs = loop_vars - loaded_names
+    init_lines = []
+    for name in sorted(missing_defs):
+        init_lines.append(f"{name} = __pir__.zeroinit(pyasir.Int64)")
+    init_statements = ast_template(
+        '\n'.join(init_lines),
+        {}
+    )
     repl = {
-        "$args": ', '.join(sorted(loaded_names | stored_names)),
-        "$outs": ', '.join(sorted(loaded_names | stored_names)),
+        "$args": ', '.join(sorted(loop_vars)),
+        "$outs": ', '.join(sorted(loop_vars)),
         "$pred": pred_expr,
         "$body": body_block,
+        "$init": init_statements
     }
     block_while =_the_global_namer.deduplicate_name("__block_while")
     sg = ast_template(f"""
+$init
 [$outs] = __pir__.unpack(__pir__.switch($pred)({block_while})($args))
 __pir_seq__ = io.sync($args, __pir_seq__)
         """,
