@@ -771,6 +771,9 @@ def _(tree: _mypy.ReturnStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
 
 @_mypy_to_ast.register
 def _(tree: _mypy.NameExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    if tree.node.fullname.startswith("llpyfe.types"):
+        ty = load_pyasir_type(tree.node.fullname)
+        return ast_parse_eval(ty)
     return ast_parse_eval(tree.name)
 
 
