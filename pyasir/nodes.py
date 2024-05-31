@@ -570,6 +570,10 @@ class UnpackNode(ValueNode):
 @custom_pprint
 @dataclass(frozen=True, order=False)
 class ExpandNode(ValueNode):
+    """
+    Note: This class supports ``__iter__`` indirectly via implementation of
+          ``__getitem__``.
+    """
     origin: ValueNode
 
     @classmethod
@@ -577,12 +581,9 @@ class ExpandNode(ValueNode):
         assert isinstance(node.datatype, pyasir.Packed)
         return cls(node.datatype, origin=node)
 
-    def __iter__(self):
-        unpacked = [
-            wrap(UnpackNode(ty, as_node(self.origin), i))
-            for i, ty in enumerate(self.datatype.elements)
-        ]
-        return iter(unpacked)
+    def __getitem__(self, i: int):
+        ty = self.datatype.elements[i]
+        return wrap(UnpackNode(ty, as_node(self.origin), i))
 
 
 @custom_pprint
