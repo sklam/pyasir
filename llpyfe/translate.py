@@ -724,7 +724,7 @@ def _(tree: _mypy.OperatorAssignmentStmt, remaining: Sequence[_mypy.Node]) -> So
         f"$lhs {opstr} $rhs",
         {
             "$lhs": tree.lvalue.name,
-            "$rhs": mypy_to_ast(tree.rvalue),
+            "$rhs": mypy_to_ast(tree.rvalue, ()),
         },
     )
 
@@ -774,6 +774,13 @@ def _(tree: _mypy.IntExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
 @_mypy_to_ast.register
 def _(tree: _mypy.PassStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return SourceBlock.empty()
+
+
+@_mypy_to_ast.register
+def _(tree: _mypy.UnaryExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
+    assert tree.op == 'not'
+    rvalue = mypy_to_ast(tree.expr, ())
+    return ast_template("0 == $rvalue", {"$rvalue": rvalue})
 
 
 # @_mypy_to_ast.register
