@@ -15,6 +15,19 @@ from typing import Any, NamedTuple, Sequence
 _REGEX_AST_TEMPLATE = re.compile(r"( *)(\$[a-zA-Z_0-9]+)")
 
 
+class GlobalNamer:
+    def __init__(self):
+        self._num = 0
+
+    def deduplicate_name(self, name: str) -> str:
+        n = self._num
+        self._num += 1
+        return f"{name}_{n}"
+
+
+_the_global_namer = GlobalNamer()
+_the_known_names = {'_df', '__pir__', 'switch', 'advance', 'list'}
+
 
 def auto_format_source(code: str) -> str:
     try:
@@ -575,8 +588,7 @@ def loop($args):
 @_mypy_to_ast.register
 def _(tree: _mypy.IfStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     names = find_mypy_names([tree])
-    known_names = {'_df', '__pir__', 'switch', 'advance', 'list'}
-    loaded_names =( names.get_read() | {'__pir_seq__'}) - known_names - names.get_first_def()
+    loaded_names =( names.get_read() | {'__pir_seq__'}) - _the_known_names - names.get_first_def()
     stored_names = names.get_written() #- names.get_first_def()
 
     [pred_tree] = tree.expr
@@ -590,14 +602,15 @@ def _(tree: _mypy.IfStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     # names = find_loaded_names(body_block.statements)
     # modified_names = loaded_names | stored_names
     repl = {
-        "$args": ', '.join(loaded_names),
-        "$outs": ', '.join(stored_names | loaded_names),
+        "$args": ', '.join(sorted(loaded_names)),
+        "$outs": ', '.join(sorted(stored_names | loaded_names)),
         "$pred": pred_expr,
         "$body": body_block,
         "$else_body": else_block,
     }
-    block = ast_template("""
-def switch($args):
+    block_switch =_the_global_namer.deduplicate_name("__block_switch")
+    block = ast_template(f"""
+def {block_switch}($args):
     @__pir__.case(1)
     def ifblk($args):
         $body
@@ -613,8 +626,8 @@ def switch($args):
 """,
     repl)
 
-    return ast_template("""
-[$outs] = __pir__.unpack(__pir__.switch($pred)(switch)($args))
+    return ast_template(f"""
+[$outs] = __pir__.unpack(__pir__.switch($pred)({block_switch})($args))
         """,
         repl
 
@@ -637,36 +650,36 @@ def _(tree: _mypy.WhileStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     # breakpoint()
     # names_after = find_mypy_names(remaining)
     # breakpoint()
-    known_names = {'_df', '__pir__', 'switch', 'advance', 'pir', 'list'}
-    loaded_names =( names.get_read() | {'__pir_seq__'}) - known_names - names.get_first_def()
+    loaded_names =( names.get_read() | {'__pir_seq__'}) - _the_known_names - names.get_first_def()
     stored_names = names.get_written() - names.get_first_def()
     # breakpoint()
     repl = {
-        "$args": ', '.join(loaded_names | stored_names),
-        "$outs": ', '.join(loaded_names | stored_names),
+        "$args": ', '.join(sorted(loaded_names | stored_names)),
+        "$outs": ', '.join(sorted(loaded_names | stored_names)),
         "$pred": pred_expr,
         "$body": body_block,
     }
-    print(repl)
-    sg = ast_template("""
-[$outs] = __pir__.unpack(__pir__.switch($pred)(swt_while)($args))
+    block_while =_the_global_namer.deduplicate_name("__block_while")
+    sg = ast_template(f"""
+[$outs] = __pir__.unpack(__pir__.switch($pred)({block_while})($args))
 __pir_seq__ = io.sync($args, __pir_seq__)
         """,
         repl
     )
     blocks = []
+    block_loop =_the_global_namer.deduplicate_name("__block_loop")
     blocks.append(ast_template(
-    """
-def loop($args):
+    f"""
+def {block_loop}($args):
     $body
     return $pred, __pir__.pack($outs)
 """, repl))
     blocks.append(ast_template(
-    """
-def swt_while($args) :
+    f"""
+def {block_while}($args) :
     @__pir__.case(1)
     def case1($args):
-        [$outs] = __pir__.unpack(__pir__.loop(loop)($args))
+        [$outs] = __pir__.unpack(__pir__.loop({block_loop})($args))
         return __pir__.pack($outs)
 
     @__pir__.case(0)
