@@ -738,5 +738,6 @@ def call(__func: Callable, *args, **kwargs) -> ValueWrap:
 
 
 def zeroinit(ty: _dt.DataType) -> DFNode:
+    ty = _dt.ensure_type(ty)
     op = ty.get_zero()
     return ExprNode(op.result_type, op, args=())
