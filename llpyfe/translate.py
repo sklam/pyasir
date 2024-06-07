@@ -9,6 +9,7 @@ import re
 import ast
 from dataclasses import dataclass
 from functools import singledispatch
+from contextlib import contextmanager
 from typing import Any, NamedTuple, Sequence
 
 
@@ -26,7 +27,19 @@ class GlobalNamer:
 
 
 _the_global_namer = GlobalNamer()
-_the_known_names = {'_df', '__pir__', 'switch', 'advance', 'list'}
+_the_known_names = {
+    "_df",
+    "__pir__",
+    "switch",
+    "advance",
+    "list",
+    "True",
+    "False",
+    "None",
+    "forloop_iter",
+    "range",
+    "Int64",
+}
 
 
 def auto_format_source(code: str) -> str:
@@ -36,7 +49,6 @@ def auto_format_source(code: str) -> str:
         return code
     else:
         return black.format_str(code, mode=black.FileMode())
-
 
 
 @dataclass(frozen=True)
@@ -109,8 +121,11 @@ class ASTWrapper(SourceGen):
     def from_source(source: str) -> ASTWrapper:
         try:
             tree = ast.parse(source)
-        except Exception:
+        except Exception as e:
             print(source)
+            import traceback
+
+            traceback.print_exc(e)
             breakpoint()
             raise
         return ASTWrapper([], tree)
@@ -133,7 +148,6 @@ def normalize_ast_module(tree: ast.AST) -> ast.expr:
     return tree
 
 
-
 _TemplateReplVal = str | SourceBlock
 
 
@@ -143,6 +157,7 @@ def ast_parse_eval(text: str) -> SourceGen:
 
 def ast_template(source: str, repl: dict[str, _TemplateReplVal]) -> SourceGen:
     out_blocks = []
+
     def match(m):
         spaces: str = m.group(1)
         key: str = m.group(2)
@@ -182,7 +197,7 @@ class Translator:
                 buf.append(self.translate_classdef(defn))
             else:
                 raise NotImplementedError(type(defn), defn)
-        return '\n'.join(buf)
+        return "\n".join(buf)
 
     def translate_classdef(self, tree: _mypy.ClassDef) -> str:
         out: list[str] = []
@@ -203,7 +218,7 @@ class Translator:
         out.append(f"@pyasir.Struct")
         out.append(f"class {tree.name}:")
         out.extend(fields)
-        return '\n'.join(out)
+        return "\n".join(out)
 
     def translate_import(self, tree: _mypy.ImportFrom | _mypy.Import) -> str:
         out: list[str] = []
@@ -223,8 +238,7 @@ class Translator:
             raise NotImplementedError(type(tree), tree)
 
         # write import lines
-        return '\n'.join(out)
-
+        return "\n".join(out)
 
     def translate(self, fndef: _mypy.FuncDef) -> str:
         sourcegen = mypy_to_ast(fndef, ())
@@ -258,7 +272,7 @@ class PostProcessSeq(ast.NodeTransformer):
         out.body = [self.visit(n) for n in body]
         if self.def_level == 1:
             # is top level
-            stmt = _assign_to_seq(ast.parse("io.seq()", mode='eval').body)
+            stmt = _assign_to_seq(ast.parse("io.seq()", mode="eval").body)
             out.body.insert(0, stmt)
         # print("<<<<")
         # print(ast.unparse(node))
@@ -300,8 +314,6 @@ def _post_proc_body(nodes):
     return body
 
 
-
-
 def mypy_to_ast(tree: _mypy.Node, remaining: Sequence[_mypy.Node]) -> SourceGen:
     out = _mypy_to_ast(tree, remaining)
     assert isinstance(out, SourceGen), f"{type(tree)} didn't return SourceGen"
@@ -314,14 +326,14 @@ def _make_load_seq() -> ast.AST:
 
 def _wrap_io_seq(args) -> ast.AST:
     # XXX: fix namespace
-    callee = ast.parse("io.sync", mode='eval').body
+    callee = ast.parse("io.sync", mode="eval").body
     callnode = ast.Call(callee, args=args, keywords=[])
     return ast.fix_missing_locations(callnode)
 
 
 def _assign_to_seq(sync_node: ast.Call) -> ast.AST:
     callnode = ast.Assign(
-        targets=[ast.Name(id='__pir_seq__', ctx=ast.Store())],
+        targets=[ast.Name(id="__pir_seq__", ctx=ast.Store())],
         value=sync_node,
     )
     return ast.fix_missing_locations(callnode)
@@ -361,7 +373,6 @@ class BlockSyncWriter:
     def write_body(self) -> list[ast.AST]:
         self.flush()
         return self._body
-
 
 
 class FindLoadedNames(ast.NodeVisitor):
@@ -412,6 +423,15 @@ class FindMyPyNames(_mypytraverser.ExtendedTraverserVisitor):
         self.__read_imported = set()
         self.in_left_value = 0
 
+    @contextmanager
+    def _write_context(self):
+        self.in_left_value += 1
+        try:
+            yield
+        finally:
+            self.in_left_value -= 1
+
+
     def get_read(self) -> set[str]:
         return frozenset(self.__read_imported)
 
@@ -422,7 +442,6 @@ class FindMyPyNames(_mypytraverser.ExtendedTraverserVisitor):
         return frozenset(self.__locally_defined)
 
     def visit_name_expr(self, expr: _mypy.NameExpr) -> None:
-
         if self.in_left_value > 0:
             print("WRITTEN", expr.name)
             self.__name_written.add(expr.name)
@@ -436,16 +455,20 @@ class FindMyPyNames(_mypytraverser.ExtendedTraverserVisitor):
                 self.__read_imported.add(expr.name)
 
     def visit_assignment_stmt(self, stmt: _mypy.AssignmentStmt) -> None:
-
         stmt.rvalue.accept(self)
         for lv in stmt.lvalues:
-            self.in_left_value += 1
-            lv.accept(self)
-            self.in_left_value -= 1
+            with self._write_context():
+                lv.accept(self)
+
+    def visit_operator_assignment_stmt(self, stmt: _mypy.OperatorAssignmentStmt) -> None:
+        stmt.rvalue.accept(self)  # read
+        stmt.lvalue.accept(self)  # read
+        with self._write_context():
+            stmt.lvalue.accept(self)  # write
 
 
 def find_mypy_names(nodes: list[_mypy.Node]) -> FindMyPyNames:
-    print('------')
+    print("------")
     finder = FindMyPyNames()
     for node in nodes:
         node.accept(finder)
@@ -453,17 +476,18 @@ def find_mypy_names(nodes: list[_mypy.Node]) -> FindMyPyNames:
     return finder
 
 
-
 def load_pyasir_type(tyname: str):
     assert isinstance(tyname, str)
-    module_path, obj_name = tyname.rsplit('.', 1)
+    module_path, obj_name = tyname.rsplit(".", 1)
     module = importlib.import_module(module_path)
     tyclass = getattr(module, obj_name)
     return tyclass.__pyasir_type__
 
 
 @singledispatch
-def _mypy_to_ast(tree: _mypy.Node, remaining: Sequence[_mypy.Node]) -> SourceGen:
+def _mypy_to_ast(
+    tree: _mypy.Node, remaining: Sequence[_mypy.Node]
+) -> SourceGen:
     raise NotImplementedError(tree)
 
 
@@ -514,7 +538,7 @@ def _(tree: _mypy.Decorator, remaining: Sequence[_mypy.Node]) -> SourceGen:
     return ast_template(
         """$decor\n$func
 """,
-        repl
+        repl,
     )
 
 
@@ -523,7 +547,7 @@ def _(tree: _mypy.Block, remaining: Sequence[_mypy.Node]) -> SourceGen:
     body = tree.body
     ast_stmt_list = []
     for i, stmt in enumerate(body):
-        ast_stmt_list.append(mypy_to_ast(stmt, body[i + 1:]))
+        ast_stmt_list.append(mypy_to_ast(stmt, body[i + 1 :]))
 
     return SourceBlock([], ast_stmt_list)
 
@@ -534,13 +558,14 @@ def _(tree: _mypy.AssignmentStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     rhs = tree.rvalue
     tree = ast_template(
         f"$lhs = $rhs",
-        {"$lhs": mypy_to_ast(lhs, ()),
-         "$rhs": mypy_to_ast(rhs, ())},
+        {"$lhs": mypy_to_ast(lhs, ()), "$rhs": mypy_to_ast(rhs, ())},
     )
     return tree
 
 
-def prepare_iterator_call(iter_expr: _mypy.CallExpr) -> tuple[SourceGen, list[SourceGen]]:
+def prepare_iterator_call(
+    iter_expr: _mypy.CallExpr,
+) -> tuple[SourceGen, list[SourceGen]]:
     callee = iter_expr.callee
     args = iter_expr.args
     return mypy_to_ast(callee), list(map(mypy_to_ast, args))
@@ -554,7 +579,7 @@ def _(tree: _mypy.ForStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     assert not tree.else_body
     body_block = mypy_to_ast(tree.body)
 
-    modified_names = find_loaded_names(body_block.statements) | {'__pir_seq__'}
+    modified_names = find_loaded_names(body_block.statements) | {"__pir_seq__"}
     names = {index_name, *modified_names}
     names.remove(index_name)
     more = tuple(names)
@@ -562,10 +587,10 @@ def _(tree: _mypy.ForStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     iter_callee, iter_args = prepare_iterator_call(iter_expr)
 
     repl = {
-        "$args": ', '.join([index_name, *more]),
-        "$loopargs": ', '.join(["iterator", *more]),
+        "$args": ", ".join([index_name, *more]),
+        "$loopargs": ", ".join(["iterator", *more]),
         "$iter_callee": iter_callee,
-        "$iter_args": ', '.join([arg.generate_source() for arg in iter_args]),
+        "$iter_args": ", ".join([arg.generate_source() for arg in iter_args]),
         "$iter": mypy_to_ast(iter_expr),
         "$body": body_block,
     }
@@ -588,28 +613,41 @@ def loop($args):
 @_mypy_to_ast.register
 def _(tree: _mypy.IfStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
     names = find_mypy_names([tree])
-    loaded_names =( names.get_read() | {'__pir_seq__'}) - _the_known_names - names.get_first_def()
-    stored_names = names.get_written() #- names.get_first_def()
+    loaded_names = (
+        (names.get_read() | {"__pir_seq__"})
+        - _the_known_names
+        - names.get_first_def()
+    )
 
     [pred_tree] = tree.expr
     [body_tree] = tree.body
     pred_expr = mypy_to_ast(pred_tree, remaining)
     body_block = mypy_to_ast(body_tree, remaining)
-    else_block = (mypy_to_ast(tree.else_body, remaining)
-                  if tree.else_body is not None
-                  else SourceBlock.empty())
+    else_block = (
+        mypy_to_ast(tree.else_body, remaining)
+        if tree.else_body is not None
+        else SourceBlock.empty()
+    )
 
-    # names = find_loaded_names(body_block.statements)
-    # modified_names = loaded_names | stored_names
+    read_afterwards = find_mypy_names(remaining).get_read()
+    if_vars = loaded_names | read_afterwards
+    missing_defs = if_vars - loaded_names
+
+    init_lines = []
+    for name in sorted(missing_defs):
+        init_lines.append(f"{name} = __pir__.zeroinit(pyasir.Int64)")
+    init_statements = ast_template("\n".join(init_lines), {})
     repl = {
-        "$args": ', '.join(sorted(loaded_names)),
-        "$outs": ', '.join(sorted(stored_names | loaded_names)),
+        "$args": ", ".join(sorted(if_vars)),
+        "$outs": ", ".join(sorted(if_vars)),
         "$pred": pred_expr,
         "$body": body_block,
         "$else_body": else_block,
+        "$init": init_statements,
     }
-    block_switch =_the_global_namer.deduplicate_name("__block_switch")
-    block = ast_template(f"""
+    block_switch = _the_global_namer.deduplicate_name("__block_switch")
+    block = ast_template(
+        f"""
 def {block_switch}($args):
     @__pir__.case(1)
     def ifblk($args):
@@ -624,15 +662,16 @@ def {block_switch}($args):
     yield ifblk
     yield elseblk
 """,
-    repl)
+        repl,
+    )
 
-    return ast_template(f"""
+    return ast_template(
+        f"""
+$init
 [$outs] = __pir__.unpack(__pir__.switch($pred)({block_switch})($args))
         """,
-        repl
-
+        repl,
     ).with_named_blocks([block])
-
 
 
 @_mypy_to_ast.register
@@ -645,45 +684,50 @@ def _(tree: _mypy.WhileStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
 
     names = find_mypy_names([tree])
 
-    # names = find_loaded_names(body_block.statements)
-    # names_after = find_mypy_names(remaining)
-    loaded_names =( names.get_read() | {'__pir_seq__'}) - _the_known_names - names.get_first_def()
-    # stored_names = names.get_written() - names.get_first_def()
+    loaded_names = (
+        (names.get_read() | {"__pir_seq__"})
+        - _the_known_names
+        - names.get_first_def()
+    )
+
     read_afterwards = find_mypy_names(remaining).get_read()
     loop_vars = loaded_names | read_afterwards
     missing_defs = loop_vars - loaded_names
     init_lines = []
     for name in sorted(missing_defs):
         init_lines.append(f"{name} = __pir__.zeroinit(pyasir.Int64)")
-    init_statements = ast_template(
-        '\n'.join(init_lines),
-        {}
-    )
+    init_statements = ast_template("\n".join(init_lines), {})
     repl = {
-        "$args": ', '.join(sorted(loop_vars)),
-        "$outs": ', '.join(sorted(loop_vars)),
+        "$args": ", ".join(sorted(loop_vars)),
+        "$outs": ", ".join(sorted(loop_vars)),
         "$pred": pred_expr,
         "$body": body_block,
-        "$init": init_statements
+        "$init": init_statements,
     }
-    block_while =_the_global_namer.deduplicate_name("__block_while")
-    sg = ast_template(f"""
+    block_while = _the_global_namer.deduplicate_name("__block_while")
+    sg = ast_template(
+        f"""
 $init
 [$outs] = __pir__.unpack(__pir__.switch($pred)({block_while})($args))
 __pir_seq__ = io.sync($args, __pir_seq__)
         """,
-        repl
+        repl,
     )
     blocks = []
-    block_loop =_the_global_namer.deduplicate_name("__block_loop")
-    blocks.append(ast_template(
-    f"""
+    block_loop = _the_global_namer.deduplicate_name("__block_loop")
+    blocks.append(
+        ast_template(
+            f"""
 def {block_loop}($args):
     $body
     return $pred, __pir__.pack($outs)
-""", repl))
-    blocks.append(ast_template(
-    f"""
+""",
+            repl,
+        )
+    )
+    blocks.append(
+        ast_template(
+            f"""
 def {block_while}($args) :
     @__pir__.case(1)
     def case1($args):
@@ -696,10 +740,13 @@ def {block_while}($args) :
 
     yield case1
     yield case0
-""", repl
-    ))
+""",
+            repl,
+        )
+    )
 
     return sg.with_named_blocks(blocks)
+
 
 @_mypy_to_ast.register
 def _(tree: _mypy.AssignmentExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
@@ -720,8 +767,12 @@ def _(tree: _mypy.OpExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     assert op == "+"
 
     return ast_template(
-        f"$left {op} $right", {"$left": mypy_to_ast(tree.left, ()),
-                               "$right": mypy_to_ast(tree.right, ())})
+        f"$left {op} $right",
+        {
+            "$left": mypy_to_ast(tree.left, ()),
+            "$right": mypy_to_ast(tree.right, ()),
+        },
+    )
 
 
 @_mypy_to_ast.register
@@ -739,7 +790,9 @@ def _(tree: _mypy.ComparisonExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
 
 
 @_mypy_to_ast.register
-def _(tree: _mypy.OperatorAssignmentStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
+def _(
+    tree: _mypy.OperatorAssignmentStmt, remaining: Sequence[_mypy.Node]
+) -> SourceGen:
     opstr = tree.op + "="
     return ast_template(
         f"$lhs {opstr} $rhs",
@@ -753,7 +806,9 @@ def _(tree: _mypy.OperatorAssignmentStmt, remaining: Sequence[_mypy.Node]) -> So
 @_mypy_to_ast.register
 def _(tree: _mypy.CallExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
     callee: _mypy.NameExpr = tree.callee
-    argbuf = ", ".join([mypy_to_ast(arg, ()).generate_source() for arg in tree.args])
+    argbuf = ", ".join(
+        [mypy_to_ast(arg, ()).generate_source() for arg in tree.args]
+    )
     return ast_template(
         f"$callee($args)",
         {
@@ -802,7 +857,7 @@ def _(tree: _mypy.PassStmt, remaining: Sequence[_mypy.Node]) -> SourceGen:
 
 @_mypy_to_ast.register
 def _(tree: _mypy.UnaryExpr, remaining: Sequence[_mypy.Node]) -> SourceGen:
-    assert tree.op == 'not'
+    assert tree.op == "not"
     rvalue = mypy_to_ast(tree.expr, ())
     return ast_template("0 == $rvalue", {"$rvalue": rvalue})
 

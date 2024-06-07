@@ -11,6 +11,7 @@ from . import nodes as _df
 from .dispatchables.interpret import eval_op
 
 
+# logging.basicConfig(level=logging.DEBUG)
 _logger = logging.getLogger(__name__)
 
 
@@ -57,7 +58,7 @@ class Context:
         assert isinstance(res, Data)
         return res
 
-    def nested_call(self, node: _df.DFNode, scope: dict[str, Any]) -> Data:
+    def nested_call(self, node: _df.DFNode, scope: dict[_df.ArgNode, Any]) -> Data:
         nested = Context(scope=scope, cache={})
         return nested.eval(node)
 
@@ -92,6 +93,10 @@ def _eval_node_CaseExprNode(node: _df.CaseExprNode, ctx: Context):
     # make sure the arguments are evaluated first
     first_case = node.cases[0]
     first_scope = first_case.scope
+    _logger.debug(
+        "CaseExprNode %s",
+        LazyRepr(lambda: {k: v.value for k, v in first_scope.items()}),
+    )
     for v_val in first_scope.values():
         ctx.eval(v_val)
     for case, case_pred in zip(node.cases, node.case_predicates, strict=True):
