@@ -28,21 +28,28 @@ def run_function(source, args):
 
     from test_source import sum1d as func
     node = func.build_node()
-    # node.to_graphviz().view()
+    node.to_graphviz().view()
     # pprint(node)
 
+    print("BEGIN INTERPRET")
     res = interpret(node, *args)
+    print("END INTERPRET")
+    print("res", res)
 
+    print("BEGIN GENERATE")
     jf = generate(node, optlevel=1)
-    llvm_res = jf(*args)
+    print("END GENERATE")
     jf.get_cfg().view()
+    print("LLVM RUNNING")
+    llvm_res = jf(*args)
+    print(jf.llmod)
     assert llvm_res == res
     return res
 
 
 def test():
     source = fe_compile()
-    args = (5,)
+    args = (10,)
     res = run_function(source, args)
     print("res =", res)
 

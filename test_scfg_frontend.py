@@ -18,12 +18,27 @@ from numba_rvsdg.core.datastructures.ast_transforms import (
 from llpyfe.types import Int64
 
 
+# def sum1d(n: Int64) -> Int64:
+#     c = 0
+#     for i in range(n):
+#         c += i
+#     return c
+
+# def sum1d(n: Int64) -> Int64:
+#     c = 0
+#     for i in range(n):
+#         for j in range(i):
+#             c += i * j
+#             if c > 100:
+#                 break
+#     return c
+
 def sum1d(n: Int64) -> Int64:
     c = 0
     for i in range(n):
-        c += i
+        for j in range(i):
+            c += i + j
     return c
-
 
 class InsertAOTDecorator(ast.NodeTransformer):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.Node:
