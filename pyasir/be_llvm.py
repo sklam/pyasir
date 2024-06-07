@@ -55,7 +55,7 @@ def generate(funcdef: _df.FuncDef, optlevel=2):
         .add_current_process()
         .export_symbol(fn.name)
     )
-    jitres = jitlib.link(lljit, repr(funcdef))
+    jitres = jitlib.link(lljit, repr(funcdef.func))
     addr = jitres[fn.name]
 
     c_argtys = [emit_c_type(ty) for ty in funcdef.argtys]
