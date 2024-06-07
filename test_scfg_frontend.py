@@ -133,10 +133,10 @@ class RewriteNext(ast.NodeTransformer):
         return node
 
     def rewrite_next_call(self, node: ast.Call) -> ast.Node:
-        if query(node.args[1], value=str) != '__sentinel__':
-            raise BailRewrite(f"expecting __sentinel__ got {node.args[1]}")
+        if query(node.args[1], value=str) != '__scfg_sentinel__':
+            raise BailRewrite(f"expecting __scfg_sentinel__ got {node.args[1]}")
         arg0, arg1 = map(ast.unparse, node.args)
-        magic = "'__sentinel__'"
+        magic = "'__scfg_sentinel__'"
         last_instr = self.get_parent_offset(-1)
         if not isinstance(last_instr, ast.Assign):
             raise BailRewrite(f"expect assign but got {last_instr}")
@@ -147,13 +147,13 @@ class RewriteNext(ast.NodeTransformer):
             raise BailRewrite(f"expect next instr to be a if but got {next_instr}")
         next_if_cmp: ast.Compare = next_instr.test
         [cmp] = next_if_cmp.comparators
-        if cmp.value != '__sentinel__':
+        if cmp.value != '__scfg_sentinel__':
             raise BailRewrite(f"expect {magic} but got {next_instr}")
         sentinel = last_instr.targets[0].id
         arg1 = sentinel
         fmt = f"__pir__.unpack(__pir__.call(advance, {arg0}, {arg1}))"
         tree = ast_parse_expr(fmt)
-        # change the next `if ? != '__sentinel__'` to `if ok`
+        # change the next `if ? != '__scfg_sentinel__'` to `if ok`
         next_instr.test = ast.Name("__adv_ok__", ctx=ast.Load())
         self.__marked_adv_unpack.add(tree)
         return tree
