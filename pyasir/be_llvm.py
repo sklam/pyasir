@@ -119,7 +119,7 @@ inttype = ir.IntType(64)
 class LLVMBackend:
     module: ir.Module
     scope: dict[str, ir.Value]
-    cache: dict[_df.DFNode, ir.Value]
+    cache: dict[int, ir.Value]
     builder: ir.IRBuilder | None = None
 
     def emit_funcdef(self, funcdef: _df.FuncDef):
@@ -153,15 +153,16 @@ class LLVMBackend:
         return fn
 
     def emit(self, node: _df.DFNode) -> ir.Value:
-        if node in self.cache:
-            res = self.cache[node]
+        ident = id(node)
+        if ident in self.cache:
+            res = self.cache[ident]
         else:
             # print(node.dump_shorten())
             data = emit_node(node, self)
             # print(f"emit {str(node)[:100]}")
             # print("-->", data.type)
             # print(self.builder.function)
-            self.cache[node] = data
+            self.cache[ident] = data
             res = data
         assert isinstance(res, ir.Value)
         return res

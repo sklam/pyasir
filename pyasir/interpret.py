@@ -46,14 +46,15 @@ class Data:
 @dataclass(frozen=True)
 class Context:
     scope: dict[str, Any]
-    cache: dict[_df.DFNode, Data]
+    cache: dict[int, Data]
 
     def eval(self, node: _df.DFNode) -> Data:
-        if node in self.cache:
-            res = self.cache[node]
+        ident = id(node)
+        if ident in self.cache:
+            res = self.cache[ident]
         else:
             data = eval_node(node, self)
-            self.cache[node] = data
+            self.cache[ident] = data
             res = data
         assert isinstance(res, Data)
         return res
